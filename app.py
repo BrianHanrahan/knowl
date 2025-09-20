@@ -1085,10 +1085,10 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.clean_worker = None
             super().closeEvent(event)
 
-qt_app = QtWidgets.QApplication(sys.argv)
-window = TranscriberWindow(args)
-window.show()
-qt_app.exec()
+    qt_app = QtWidgets.QApplication(sys.argv)
+    window = TranscriberWindow(args)
+    window.show()
+    qt_app.exec()
 
 
 def prompt_for_cleanup(default_prompt: str) -> str:
