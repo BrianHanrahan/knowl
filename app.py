@@ -540,7 +540,7 @@ def launch_ui(args: argparse.Namespace) -> None:
         def prompt_text(self) -> str:
             return self.text_edit.toPlainText()
 
-class TranscriberWindow(QtWidgets.QMainWindow):
+    class TranscriberWindow(QtWidgets.QMainWindow):
         def __init__(self, args: argparse.Namespace) -> None:
             super().__init__()
             self.args = args
