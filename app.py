@@ -24,8 +24,9 @@ DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_CLEAN_PROMPT = (
     "You are an expert copy editor tasked with cleaning a noisy automatic speech transcript. "
     "Improve grammar, punctuation, and clarity while keeping the speakers’ intent. If you insert or replace "
-    "words that were unclear, wrap your replacements in square brackets, e.g. ‘[the store]’. Remove unnecesssary, repetitive "
-    "timestamps and speaker labels, but otherwise keep them intact. Return only the revised transcript text."
+    "words that were unclear, wrap your replacements in square brackets, e.g. ‘[the store]’. Preserve existing "
+    "timestamps and speaker labels exactly, but only when the speaker first speaks or when the speaker changes. "
+    "Return only the revised transcript text."
 )
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
@@ -233,7 +234,11 @@ def _openai_cleanup_direct(transcript: str, prompt: str, model: str) -> str:
         input=[
             {
                 "role": "system",
-                "content": "You polish speech transcripts produced by automatic recognition systems and return only the cleaned transcript.",
+                "content": (
+                    "You polish speech transcripts produced by automatic recognition systems, consult web search when"
+                    " needed to resolve unclear references, and return only the cleaned transcript with any additions"
+                    " in square brackets."
+                ),
             },
             {
                 "role": "user",
@@ -241,6 +246,7 @@ def _openai_cleanup_direct(transcript: str, prompt: str, model: str) -> str:
             },
         ],
         temperature=0.2,
+        tools=[{"type": "web_search"}],
     )
 
     cleaned = (response.output_text or "").strip()

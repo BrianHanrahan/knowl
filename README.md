@@ -77,7 +77,8 @@ python app.py --ui
 
 1. Add `OPENAI_API_KEY` to your `.env` file (or export it in your shell).
 2. Run the CLI with `--openai-clean` or press **Clean with OpenAI** in the UI after transcription completes.
-3. Review the suggested prompt; tweak it to match your editing needs before the request is sent.
+3. Review the suggested prompt; tweak it to match your editing needs before the request is sent. The LLM can invoke
+   OpenAI's web search tool automatically when it needs context for names, terms, or facts.
 4. The cleaned transcript replaces the on-screen text and is written back to the saved file.
 
 ## Troubleshooting
