@@ -308,6 +308,75 @@ def clean_transcript_with_openai(transcript: str, prompt: str, model: str) -> st
         return cleaned
 
 
+def run_transcription_worker_entry(input_path: Path, output_path: Path) -> None:
+    try:
+        payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
+        audio_path = Path(payload["audio_path"])
+        result = transcribe_pipeline(
+            audio_path,
+            payload["model"],
+            payload.get("language"),
+            payload.get("device"),
+            payload.get("diarize", False),
+            payload.get("diarization_token"),
+        )
+        output = {"result": result}
+    except Exception as exc:  # noqa: BLE001
+        output = {"error": str(exc)}
+
+    Path(output_path).write_text(json.dumps(output), encoding="utf-8")
+
+
+def run_transcription_subprocess(
+    audio_path: Path,
+    model_name: str,
+    language: Optional[str],
+    device: Optional[str],
+    diarize: bool,
+    diarization_token: Optional[str],
+) -> Dict[str, object]:
+    with tempfile.TemporaryDirectory(prefix="transcribe_") as temp_dir:
+        input_path = Path(temp_dir) / "input.json"
+        output_path = Path(temp_dir) / "output.json"
+        payload = {
+            "audio_path": str(audio_path),
+            "model": model_name,
+            "language": language,
+            "device": device,
+            "diarize": diarize,
+            "diarization_token": diarization_token,
+        }
+        input_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--transcribe-worker",
+                "--transcribe-input",
+                str(input_path),
+                "--transcribe-output",
+                str(output_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            stderr = result.stderr.strip() or result.stdout.strip()
+            raise RuntimeError(
+                f"Transcription subprocess failed (exit code {result.returncode}): {stderr or 'unknown error'}"
+            )
+
+        if not output_path.exists():
+            raise RuntimeError("Transcription subprocess did not produce an output file.")
+
+        data = json.loads(output_path.read_text(encoding="utf-8"))
+        if data.get("error"):
+            raise RuntimeError(data["error"])
+        return data.get("result", {})
+
+
 class AudioRecorder:
     """Manage a start/stop microphone recording session."""
 
@@ -401,7 +470,7 @@ def launch_ui(args: argparse.Namespace) -> None:
                     temp_path = Path(tmp.name)
 
                 write_wav(self.audio, self.sample_rate, temp_path)
-                result = transcribe_pipeline(
+                result = run_transcription_subprocess(
                     temp_path,
                     self.args.model,
                     self.args.language,
@@ -993,6 +1062,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--openai-clean-worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--openai-clean-input", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--openai-clean-output", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--transcribe-worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--transcribe-input", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--transcribe-output", type=Path, help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -1004,6 +1076,13 @@ def main() -> None:
             print("Missing input/output paths for OpenAI cleanup worker", file=sys.stderr)
             sys.exit(1)
         run_openai_cleanup_worker(args.openai_clean_input, args.openai_clean_output)
+        return
+
+    if args.transcribe_worker:
+        if not args.transcribe_input or not args.transcribe_output:
+            print("Missing input/output paths for transcription worker", file=sys.stderr)
+            sys.exit(1)
+        run_transcription_worker_entry(args.transcribe_input, args.transcribe_output)
         return
 
     if args.list_devices:
@@ -1040,7 +1119,7 @@ def main() -> None:
             raise
 
     try:
-        result = transcribe_pipeline(
+        result = run_transcription_subprocess(
             audio_path,
             args.model,
             args.language,
