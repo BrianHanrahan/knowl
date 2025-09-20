@@ -31,7 +31,8 @@ DEFAULT_CLEAN_PROMPT = (
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
-LANGUAGE_CHOICES: List[tuple[str, str]] = [
+LANGUAGE_CHOICES: List[tuple[Optional[str], str]] = [
+    (None, "Auto-detect"),
     ("af", "Afrikaans"),
     ("ar", "Arabic"),
     ("bn", "Bengali"),
@@ -224,14 +225,13 @@ def transcribe_pipeline(
 
     task = "transcribe"
     notice: Optional[str] = None
-    if output_language and language_code:
-        if output_language != language_code:
-            if output_language == "en":
-                task = "translate"
-            else:
-                notice = (
-                    "Whisper only supports translation to English. Output language has been left as the input language."
-                )
+    if output_language:
+        if output_language == "en" and (language_code is None or language_code != "en"):
+            task = "translate"
+        elif language_code and output_language != language_code:
+            notice = (
+                "Whisper only supports translation to English. Output language has been left as the input language."
+            )
     result = model.transcribe(str(audio_path), language=language_code, task=task)
 
     raw_text = result.get("text", "").strip()
@@ -674,10 +674,10 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.input_language_combo = QtWidgets.QComboBox()
             for code, label in LANGUAGE_CHOICES:
                 self.input_language_combo.addItem(label, code)
-            default_input = self.args.language or "en"
+            default_input = self.args.language
             index = self.input_language_combo.findData(default_input)
             if index < 0:
-                index = self.input_language_combo.findData("en")
+                index = self.input_language_combo.findData(None)
             if index >= 0:
                 self.input_language_combo.setCurrentIndex(index)
             language_row.addWidget(self.input_language_combo)
@@ -1223,7 +1223,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--channels", type=int, default=1, help="Number of input channels")
     parser.add_argument("--device", type=int, default=None, help="Sounddevice input device index")
     parser.add_argument("--model", type=str, default="base", help="Whisper model size to load")
-    parser.add_argument("--language", type=str, default="en", help="Input language code (ISO-639-1)")
+    parser.add_argument("--language", type=str, default=None, help="Input language code (ISO-639-1), leave unset for auto")
     parser.add_argument("--save-audio", type=Path, default=None, help="Optional path to save the recorded WAV audio (CLI only)")
     parser.add_argument("--whisper-device", type=str, default=None, help="Device to run Whisper on (cpu, cuda, etc.)")
     parser.add_argument("--diarize", action="store_true", help="Enable speaker diarization using Pyannote models")
