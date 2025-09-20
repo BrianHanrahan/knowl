@@ -1,6 +1,8 @@
 import argparse
 import functools
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -22,8 +24,8 @@ DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_CLEAN_PROMPT = (
     "You are an expert copy editor tasked with cleaning a noisy automatic speech transcript. "
     "Improve grammar, punctuation, and clarity while keeping the speakers’ intent. If you insert or replace "
-    "words that were unclear, wrap your replacements in square brackets, e.g. ‘[the store]’. Preserve existing "
-    "timestamps and speaker labels exactly. Return only the revised transcript text."
+    "words that were unclear, wrap your replacements in square brackets, e.g. ‘[the store]’. Remove unnecesssary, repetitive "
+    "timestamps and speaker labels, but otherwise keep them intact. Return only the revised transcript text."
 )
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
@@ -213,24 +215,25 @@ def save_transcription_text(text: str) -> Path:
     return path
 
 
-def clean_transcript_with_openai(transcript: str, prompt: str, model: str) -> str:
+def _openai_cleanup_direct(transcript: str, prompt: str, model: str) -> str:
     try:
         from openai import OpenAI
     except ImportError as exc:  # noqa: F401
         raise RuntimeError(
             "The 'openai' package is not installed. Install it with 'pip install openai'."
         ) from exc
+
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not set; cannot clean transcript with OpenAI.")
-    client = OpenAI(api_key=api_key)
 
+    client = OpenAI(api_key=api_key)
     response = client.responses.create(
         model=model,
         input=[
             {
                 "role": "system",
-                "content": f"You polish speech transcripts produced by automatic recognition systems and return only the cleaned transcript.",
+                "content": "You polish speech transcripts produced by automatic recognition systems and return only the cleaned transcript.",
             },
             {
                 "role": "user",
@@ -244,6 +247,59 @@ def clean_transcript_with_openai(transcript: str, prompt: str, model: str) -> st
     if not cleaned:
         raise RuntimeError("OpenAI did not return any content.")
     return cleaned
+
+
+def run_openai_cleanup_worker(input_path: Path, output_path: Path) -> None:
+    try:
+        payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
+        transcript = payload["transcript"]
+        prompt = payload["prompt"]
+        model = payload["model"]
+        cleaned = _openai_cleanup_direct(transcript, prompt, model)
+        output = {"cleaned_text": cleaned}
+    except Exception as exc:  # noqa: BLE001
+        output = {"error": str(exc)}
+
+    Path(output_path).write_text(json.dumps(output), encoding="utf-8")
+
+
+def clean_transcript_with_openai(transcript: str, prompt: str, model: str) -> str:
+    with tempfile.TemporaryDirectory(prefix="openai_cleanup_") as temp_dir:
+        input_path = Path(temp_dir) / "input.json"
+        output_path = Path(temp_dir) / "output.json"
+        payload = {"transcript": transcript, "prompt": prompt, "model": model}
+        input_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--openai-clean-worker",
+                "--openai-clean-input",
+                str(input_path),
+                "--openai-clean-output",
+                str(output_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            stderr = result.stderr.strip() or result.stdout.strip()
+            raise RuntimeError(
+                f"OpenAI cleanup subprocess failed (exit code {result.returncode}): {stderr or 'unknown error'}"
+            )
+
+        if not output_path.exists():
+            raise RuntimeError("OpenAI cleanup subprocess did not produce an output file.")
+
+        data = json.loads(output_path.read_text(encoding="utf-8"))
+        if data.get("error"):
+            raise RuntimeError(data["error"])
+        cleaned = (data.get("cleaned_text") or "").strip()
+        if not cleaned:
+            raise RuntimeError("OpenAI cleanup returned no content.")
+        return cleaned
 
 
 class AudioRecorder:
@@ -928,11 +984,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--openai-model", type=str, default=DEFAULT_OPENAI_MODEL, help="OpenAI model to use for cleanup")
     parser.add_argument("--list-devices", action="store_true", help="List available audio input devices and exit")
     parser.add_argument("--ui", action="store_true", help="Launch the graphical interface with start/stop controls")
+    parser.add_argument("--openai-clean-worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--openai-clean-input", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--openai-clean-output", type=Path, help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+
+    if args.openai_clean_worker:
+        if not args.openai_clean_input or not args.openai_clean_output:
+            print("Missing input/output paths for OpenAI cleanup worker", file=sys.stderr)
+            sys.exit(1)
+        run_openai_cleanup_worker(args.openai_clean_input, args.openai_clean_output)
+        return
 
     if args.list_devices:
         list_audio_devices()
