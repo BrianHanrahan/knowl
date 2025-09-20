@@ -3,3 +3,4 @@ sounddevice
 soundfile
 numpy
 PySide6
+pyannote.audio

@@ -15,6 +15,7 @@
 - Provide a “big button” UI to start/stop recordings, show live status, and display the most recent transcript.
 - Persist transcripts to `~/Documents/transcriptions/<YYMMDDHHMMSS>.txt` and surface a reverse-chronological list in the UI.
 - Surface actionable error messages for device, dependency, or transcription failures.
+- Provide tools to rename diarized speakers after transcription so saved transcripts reflect real names.
 
 ### Non-Goals
 - Building additional platform-specific GUIs beyond the bundled PySide6 desktop app.
@@ -51,6 +52,7 @@
   - Status label reflecting recording/transcription progress and errors plus an elapsed timer.
   - Viewer showing the latest or selected transcript text.
   - List of saved transcript files ordered by newest first, updating after each transcription.
+  - Optional speaker diarization (requires Hugging Face token) and a rename dialog to relabel speakers post-transcription.
 
 ## 5. UX & Interaction Flow
 1. User optionally runs `python app.py --list-devices` to gather device indices.

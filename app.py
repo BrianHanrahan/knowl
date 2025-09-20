@@ -1,11 +1,12 @@
 import argparse
 import functools
+import os
 import sys
 import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import sounddevice as sd
@@ -15,6 +16,7 @@ import whisper
 
 DEFAULT_SAMPLE_RATE = 16_000
 TRANSCRIPT_DIR = Path.home() / "Documents" / "transcriptions"
+DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
 
 
 def list_audio_devices() -> None:
@@ -64,16 +66,132 @@ def load_whisper_model(model_name: str, device: Optional[str]):
     return whisper.load_model(model_name, device=device)
 
 
-def transcribe_audio(audio_path: Path, model_name: str, language: Optional[str], device: Optional[str]) -> str:
-    """Transcribe audio using a cached Whisper model."""
-    print("Transcribing audio...")
+@functools.lru_cache(maxsize=1)
+def _load_diarization_pipeline(token: str):
+    from pyannote.audio import Pipeline  # Imported lazily to avoid dependency unless needed.
+
+    return Pipeline.from_pretrained(DIARIZATION_MODEL_ID, use_auth_token=token)
+
+
+def load_diarization_pipeline(token: str):
+    if not token:
+        raise RuntimeError(
+            "Speaker diarization requires a Hugging Face access token. Provide one via --diarization-token "
+            "or the PYANNOTE_AUTH_TOKEN environment variable."
+        )
+    return _load_diarization_pipeline(token)
+
+
+def diarize_audio(audio_path: Path, token: Optional[str]) -> List[Dict[str, float]]:
+    token = token or os.getenv("PYANNOTE_AUTH_TOKEN")
+    pipeline = load_diarization_pipeline(token)
+    diarization = pipeline(str(audio_path))
+    segments: List[Dict[str, float]] = []
+    for segment, _, speaker in diarization.itertracks(yield_label=True):
+        segments.append(
+            {
+                "start": float(segment.start),
+                "end": float(segment.end),
+                "speaker": speaker,
+            }
+        )
+    segments.sort(key=lambda item: (item["start"], item["end"]))
+    if not segments:
+        raise RuntimeError("Diarization did not produce any speaker segments.")
+    return segments
+
+
+def assign_speakers(whisper_segments: List[Dict], diarization_segments: List[Dict]) -> List[Dict]:
+    assigned: List[Dict] = []
+    for seg in whisper_segments:
+        start = float(seg.get("start", 0.0))
+        end = float(seg.get("end", start))
+        text = seg.get("text", "").strip()
+        best_speaker = None
+        best_overlap = 0.0
+        for diar in diarization_segments:
+            overlap = min(end, diar["end"]) - max(start, diar["start"])
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_speaker = diar["speaker"]
+        assigned.append(
+            {
+                "start": start,
+                "end": end,
+                "text": text,
+                "speaker": best_speaker or "Speaker",
+            }
+        )
+    return assigned
+
+
+def format_timestamp(seconds: float) -> str:
+    total_seconds = int(round(seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def format_transcript_segments(segments: List[Dict], speaker_map: Optional[Dict[str, str]] = None) -> str:
+    if not segments:
+        return ""
+    speaker_map = speaker_map or {}
+    lines: List[str] = []
+    for seg in segments:
+        speaker = seg.get("speaker") or "Speaker"
+        speaker_name = speaker_map.get(speaker, speaker)
+        timestamp = format_timestamp(seg.get("start", 0.0))
+        text = seg.get("text", "").strip()
+        if text:
+            lines.append(f"[{timestamp}] {speaker_name}: {text}")
+    return "\n".join(lines).strip()
+
+
+def parse_speaker_labels(values: List[str]) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    for item in values:
+        if "=" not in item:
+            raise ValueError(f"Invalid speaker label '{item}'. Use SPEAKER_00=Alice format.")
+        key, value = item.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or not value:
+            raise ValueError(f"Invalid speaker label '{item}'. Use SPEAKER_00=Alice format.")
+        mapping[key] = value
+    return mapping
+
+
+def transcribe_pipeline(
+    audio_path: Path,
+    model_name: str,
+    language: Optional[str],
+    device: Optional[str],
+    diarize: bool,
+    diarization_token: Optional[str],
+) -> Dict[str, object]:
     model = load_whisper_model(model_name, device)
     result = model.transcribe(str(audio_path), language=language)
-    return result.get("text", "").strip()
+
+    raw_text = result.get("text", "").strip()
+    whisper_segments = result.get("segments", [])
+
+    segments: List[Dict] = []
+    diarized = False
+    if diarize:
+        diarization_segments = diarize_audio(audio_path, diarization_token)
+        segments = assign_speakers(whisper_segments, diarization_segments)
+        diarized = bool(segments)
+
+    return {
+        "raw_text": raw_text,
+        "segments": segments,
+        "diarized": diarized,
+    }
 
 
 def save_transcription_text(text: str) -> Path:
-    """Persist transcription text to the timestamped Documents/transcriptions directory."""
     TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%y%m%d%H%M%S")
     path = TRANSCRIPT_DIR / f"{timestamp}.txt"
@@ -81,7 +199,7 @@ def save_transcription_text(text: str) -> Path:
     while path.exists():
         path = TRANSCRIPT_DIR / f"{timestamp}_{counter}.txt"
         counter += 1
-    path.write_text(text + "\n", encoding="utf-8")
+    path.write_text(text.strip() + "\n", encoding="utf-8")
     return path
 
 
@@ -93,7 +211,7 @@ class AudioRecorder:
         self.channels = channels
         self.device = device
         self._stream: Optional[sd.InputStream] = None
-        self._frames: list[np.ndarray] = []
+        self._frames: List[np.ndarray] = []
         self._lock = threading.Lock()
 
     def start(self) -> None:
@@ -145,18 +263,28 @@ def launch_ui(args: argparse.Namespace) -> None:
         raise RuntimeError("PySide6 is required for the UI. Install it with 'pip install PySide6'.") from exc
 
     class TranscriptionWorker(QtCore.QObject):
-        finished = QtCore.Signal(str, object, object)
+        finished = QtCore.Signal(object, object)  # result, error
 
-        def __init__(self, audio: np.ndarray, sample_rate: int, args: argparse.Namespace):
+        def __init__(
+            self,
+            audio: np.ndarray,
+            sample_rate: int,
+            args: argparse.Namespace,
+            diarize: bool,
+            diarization_token: Optional[str],
+            speaker_map: Optional[Dict[str, str]] = None,
+        ) -> None:
             super().__init__()
             self.audio = audio
             self.sample_rate = sample_rate
             self.args = args
+            self.diarize = diarize
+            self.diarization_token = diarization_token
+            self.speaker_map = speaker_map or {}
 
         @QtCore.Slot()
         def run(self) -> None:
-            text = ""
-            saved_path: Optional[Path] = None
+            result: Dict[str, object] = {"raw_text": "", "segments": [], "diarized": False}
             error: Optional[str] = None
             temp_path: Optional[Path] = None
 
@@ -168,18 +296,32 @@ def launch_ui(args: argparse.Namespace) -> None:
                     temp_path = Path(tmp.name)
 
                 write_wav(self.audio, self.sample_rate, temp_path)
-                text = transcribe_audio(temp_path, self.args.model, self.args.language, self.args.whisper_device)
-                if not text:
-                    text = "[No speech detected]"
-                saved_path = save_transcription_text(text)
+                result = transcribe_pipeline(
+                    temp_path,
+                    self.args.model,
+                    self.args.language,
+                    self.args.whisper_device,
+                    self.diarize,
+                    self.diarization_token,
+                )
+
+                if result.get("diarized"):
+                    formatted = format_transcript_segments(result["segments"], self.speaker_map)
+                else:
+                    formatted = result.get("raw_text", "")
+
+                saved_path = save_transcription_text(formatted)
+                result["formatted_text"] = formatted
+                result["saved_path"] = str(saved_path)
             except Exception as exc:  # noqa: BLE001
                 error = str(exc)
+                result["formatted_text"] = ""
+                result["saved_path"] = ""
             finally:
                 if temp_path is not None:
                     temp_path.unlink(missing_ok=True)
 
-            saved_path_str = str(saved_path) if saved_path else ""
-            self.finished.emit(text, saved_path_str, error)
+            self.finished.emit(result, error)
 
     class TranscriberWindow(QtWidgets.QMainWindow):
         def __init__(self, args: argparse.Namespace) -> None:
@@ -188,9 +330,12 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.recorder = AudioRecorder(args.sample_rate, args.channels, args.device)
             self.is_recording = False
             self.elapsed_seconds = 0
-            self.transcription_files: list[Path] = []
+            self.transcription_files: List[Path] = []
             self.worker_thread: Optional[QtCore.QThread] = None
             self.worker: Optional[TranscriptionWorker] = None
+            self.current_segments: List[Dict] = []
+            self.speaker_names: Dict[str, str] = {}
+            self.current_saved_path: Optional[Path] = None
 
             self.setWindowTitle("Whisper Microphone Transcriber")
             self.resize(960, 600)
@@ -247,6 +392,15 @@ def launch_ui(args: argparse.Namespace) -> None:
             timer_row.addStretch()
             info_layout.addLayout(timer_row)
 
+            self.diarize_checkbox = QtWidgets.QCheckBox("Enable speaker diarization")
+            self.diarize_checkbox.setChecked(self.args.diarize)
+            info_layout.addWidget(self.diarize_checkbox)
+
+            self.rename_button = QtWidgets.QPushButton("Rename Speakers")
+            self.rename_button.setEnabled(False)
+            self.rename_button.clicked.connect(self.rename_speakers)
+            info_layout.addWidget(self.rename_button)
+
             header_layout.addStretch()
 
             body_layout = QtWidgets.QHBoxLayout()
@@ -301,7 +455,17 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.start_worker(audio)
 
         def start_worker(self, audio: np.ndarray) -> None:
-            worker = TranscriptionWorker(audio, self.args.sample_rate, self.args)
+            diarize = self.diarize_checkbox.isChecked()
+            token = self.args.diarization_token or os.getenv("PYANNOTE_AUTH_TOKEN")
+            if diarize and not token:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Speaker Diarization",
+                    "No Hugging Face token provided (PYANNOTE_AUTH_TOKEN). Continuing without diarization.",
+                )
+                diarize = False
+
+            worker = TranscriptionWorker(audio, self.args.sample_rate, self.args, diarize, token, {})
             thread = QtCore.QThread(self)
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
@@ -313,26 +477,46 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.worker_thread = thread
             self.worker = worker
 
-        def handle_transcription_finished(self, text: str, saved_path_str: object, error: object) -> None:
+        def handle_transcription_finished(self, result: object, error: object) -> None:
             self.record_button.setText("Transcribe")
             self.record_button.setEnabled(True)
-
-            if error:
-                self.status_label.setText("Transcription failed")
-                QtWidgets.QMessageBox.critical(self, "Transcription Error", str(error))
-            else:
-                self.status_label.setText("Transcription complete")
-                self.transcript_edit.setPlainText(text)
-                self.timer_label.setText("00:00")
-                self.refresh_file_list()
-
-                if saved_path_str:
-                    saved_path = Path(str(saved_path_str))
-                    self.select_file(saved_path)
 
             if self.worker_thread is not None:
                 self.worker_thread = None
             self.worker = None
+
+            if error:
+                self.status_label.setText("Transcription failed")
+                QtWidgets.QMessageBox.critical(self, "Transcription Error", str(error))
+                return
+
+            if not isinstance(result, dict):
+                result = {}
+
+            formatted_text = result.get("formatted_text") or result.get("raw_text", "")
+            self.transcript_edit.setPlainText(formatted_text)
+            self.status_label.setText("Transcription complete")
+            self.timer_label.setText("00:00")
+
+            saved_path_str = result.get("saved_path") or ""
+            self.current_saved_path = Path(saved_path_str) if saved_path_str else None
+
+            segments = result.get("segments") or []
+            if result.get("diarized") and segments:
+                unique_speakers = sorted({seg.get("speaker") for seg in segments if seg.get("speaker")})
+                self.speaker_names = {speaker: speaker for speaker in unique_speakers}
+            else:
+                segments = []
+                self.speaker_names = {}
+            self.current_segments = segments
+
+            self.rename_button.setEnabled(bool(self.speaker_names))
+
+            self.refresh_file_list()
+            if self.current_saved_path:
+                self.select_file(self.current_saved_path)
+            elif not segments:
+                self.transcript_edit.setPlainText(formatted_text)
 
         def update_timer(self) -> None:
             if not self.is_recording:
@@ -341,13 +525,13 @@ def launch_ui(args: argparse.Namespace) -> None:
             minutes, seconds = divmod(self.elapsed_seconds, 60)
             self.timer_label.setText(f"{minutes:02d}:{seconds:02d}")
 
-        def gather_files(self) -> list[Path]:
+        def gather_files(self) -> List[Path]:
             TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
             files = [p.resolve() for p in TRANSCRIPT_DIR.glob("*.txt") if p.is_file()]
             files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
             return files
 
-        def refresh_file_list(self, files: Optional[list[Path]] = None) -> None:
+        def refresh_file_list(self, files: Optional[List[Path]] = None) -> None:
             if files is None:
                 files = self.gather_files()
 
@@ -374,6 +558,7 @@ def launch_ui(args: argparse.Namespace) -> None:
             if row < 0 or row >= len(self.transcription_files):
                 return
             self.display_file(self.transcription_files[row])
+            self.rename_button.setEnabled(False)
 
         def display_file(self, path: Path) -> None:
             try:
@@ -386,10 +571,55 @@ def launch_ui(args: argparse.Namespace) -> None:
 
         def select_file(self, path: Path) -> None:
             if path not in self.transcription_files:
-                return
+                self.refresh_file_list()
+                if path not in self.transcription_files:
+                    return
             row = self.transcription_files.index(path)
             self.list_widget.setCurrentRow(row)
             self.display_file(path)
+            if self.current_segments:
+                self.rename_button.setEnabled(True)
+
+        def rename_speakers(self) -> None:
+            if not self.current_segments or not self.speaker_names:
+                return
+
+            dialog = QtWidgets.QDialog(self)
+            dialog.setWindowTitle("Rename Speakers")
+            form_layout = QtWidgets.QFormLayout(dialog)
+            edits: Dict[str, QtWidgets.QLineEdit] = {}
+            for speaker, current_name in self.speaker_names.items():
+                line = QtWidgets.QLineEdit(current_name)
+                edits[speaker] = line
+                form_layout.addRow(f"{speaker}:", line)
+
+            buttons = QtWidgets.QDialogButtonBox(
+                QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+            )
+            buttons.accepted.connect(dialog.accept)
+            buttons.rejected.connect(dialog.reject)
+            form_layout.addWidget(buttons)
+
+            if dialog.exec() == QtWidgets.QDialog.Accepted:
+                for speaker, line in edits.items():
+                    name = line.text().strip() or speaker
+                    self.speaker_names[speaker] = name
+                self.apply_speaker_names()
+
+        def apply_speaker_names(self) -> None:
+            if not self.current_segments:
+                return
+            formatted = format_transcript_segments(self.current_segments, self.speaker_names)
+            self.transcript_edit.setPlainText(formatted)
+            if self.current_saved_path:
+                try:
+                    self.current_saved_path.write_text(formatted + "\n", encoding="utf-8")
+                except OSError as exc:
+                    QtWidgets.QMessageBox.warning(
+                        self,
+                        "Save Error",
+                        f"Could not update transcript file: {exc}",
+                    )
 
         def closeEvent(self, event: QtCore.QEvent) -> None:  # noqa: D401
             if self.is_recording:
@@ -421,6 +651,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--language", type=str, default=None, help="Language code hint for transcription")
     parser.add_argument("--save-audio", type=Path, default=None, help="Optional path to save the recorded WAV audio (CLI only)")
     parser.add_argument("--whisper-device", type=str, default=None, help="Device to run Whisper on (cpu, cuda, etc.)")
+    parser.add_argument("--diarize", action="store_true", help="Enable speaker diarization using Pyannote models")
+    parser.add_argument("--diarization-token", type=str, default=None, help="Hugging Face token for the diarization model")
+    parser.add_argument(
+        "--speaker-label",
+        action="append",
+        default=[],
+        help="Map diarized speaker IDs to names (format SPEAKER_00=Alice). Can be provided multiple times.",
+    )
     parser.add_argument("--list-devices", action="store_true", help="List available audio input devices and exit")
     parser.add_argument("--ui", action="store_true", help="Launch the graphical interface with start/stop controls")
     return parser.parse_args()
@@ -454,30 +692,50 @@ def main() -> None:
         write_wav(audio, args.sample_rate, audio_path)
     else:
         temp_file = tempfile.NamedTemporaryFile(prefix="whisper_recording_", suffix=".wav", delete=False)
-        temp_path = Path(temp_file.name)
+        audio_path = Path(temp_file.name)
         temp_file.close()
         try:
-            write_wav(audio, args.sample_rate, temp_path)
+            write_wav(audio, args.sample_rate, audio_path)
         except Exception:  # noqa: BLE001
-            temp_path.unlink(missing_ok=True)
+            audio_path.unlink(missing_ok=True)
             raise
-        audio_path = temp_path
 
     try:
-        transcription = transcribe_audio(
+        result = transcribe_pipeline(
             audio_path,
             args.model,
             args.language,
             args.whisper_device,
+            args.diarize,
+            args.diarization_token,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"Transcription failed: {exc}", file=sys.stderr)
+        if not args.save_audio and audio_path.exists():
+            audio_path.unlink(missing_ok=True)
         sys.exit(1)
     finally:
         if not args.save_audio and audio_path.exists():
             audio_path.unlink(missing_ok=True)
 
-    print("\nTranscription:\n" + transcription)
+    final_text = result.get("raw_text", "")
+    segments = result.get("segments") or []
+
+    if args.diarize and result.get("diarized") and segments:
+        try:
+            speaker_map = parse_speaker_labels(args.speaker_label)
+        except ValueError as exc:
+            print(f"{exc}", file=sys.stderr)
+            sys.exit(1)
+        if not speaker_map:
+            print(
+                "Detected speakers: " + ", ".join(sorted({seg['speaker'] for seg in segments if seg.get('speaker')}))
+            )
+        final_text = format_transcript_segments(segments, speaker_map)
+    else:
+        final_text = result.get("raw_text", "")
+
+    print("\nTranscription:\n" + final_text)
 
 
 if __name__ == "__main__":
