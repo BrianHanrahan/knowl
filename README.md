@@ -1,0 +1,63 @@
+# Whisper Microphone Transcriber
+
+This command-line tool captures audio from your microphone and transcribes it locally using [OpenAI Whisper](https://github.com/openai/whisper).
+
+## Prerequisites
+
+- Python 3.9+
+- `ffmpeg` available on your PATH (required by Whisper)
+- Working microphone input device
+- `PySide6` (installed automatically via `requirements.txt`) for the desktop UI
+
+## Setup
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+## Usage
+
+Record 5 seconds of audio (default) and transcribe with the Whisper `base` model:
+
+```bash
+source .venv/bin/activate
+python app.py
+```
+
+Useful options:
+
+- `--duration`: Recording length in seconds, e.g. `--duration 10`
+- `--model`: Whisper model name, e.g. `--model small`
+- `--save-audio`: Keep the recorded WAV file, e.g. `--save-audio recordings/latest.wav`
+- `--list-devices`: Show available microphone devices
+- `--device`: Use a specific device index from `--list-devices`
+- `--language`: Provide a language hint (e.g. `--language en`)
+- `--whisper-device`: Pass `cuda` to use a GPU-enabled setup (if available)
+- `--ui`: Launch the graphical interface instead of running in the terminal
+
+For example, to record 15 seconds using device #2 and keep the audio file:
+
+```bash
+python app.py --duration 15 --device 2 --save-audio recordings/sample.wav
+```
+
+### Graphical UI
+
+Launch the PySide6 desktop UI:
+
+```bash
+python app.py --ui
+```
+
+- Press **Transcribe** to start recording; the button switches to **Stop** and the timer counts elapsed seconds.
+- Press **Stop** to finish. The capture is transcribed locally and saved to `~/Documents/transcriptions/<YYMMDDHHMMSS>.txt`.
+- The transcript list (newest first) refreshes automatically. Selecting an entry updates the viewer with the stored text.
+
+## Troubleshooting
+
+- If recording fails, confirm the device index and that no other application is using the microphone.
+- Ensure `ffmpeg` is installed (`ffmpeg -version`).
+- Loading larger models (e.g. `large`) requires more memory and time.
+```
