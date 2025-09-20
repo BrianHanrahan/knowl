@@ -676,11 +676,21 @@ def launch_ui(args: argparse.Namespace) -> None:
             if row < 0 or row >= len(self.transcription_files):
                 return
             path = self.transcription_files[row]
+            keep_segments = (
+                self.current_saved_path is not None
+                and path.resolve() == self.current_saved_path.resolve()
+                and bool(self.current_segments)
+            )
+
             self.display_file(path)
             self.current_saved_path = path
-            self.current_segments = []
-            self.speaker_names = {}
-            self.rename_button.setEnabled(False)
+
+            if keep_segments:
+                self.rename_button.setEnabled(True)
+            else:
+                self.current_segments = []
+                self.speaker_names = {}
+                self.rename_button.setEnabled(False)
             self.update_clean_button_state()
 
         def display_file(self, path: Path) -> None:
