@@ -215,7 +215,6 @@ def transcribe_pipeline(
     audio_path: Path,
     model_name: str,
     input_language: Optional[str],
-    output_language: Optional[str],
     device: Optional[str],
     diarize: bool,
     diarization_token: Optional[str],
@@ -223,15 +222,7 @@ def transcribe_pipeline(
     model = load_whisper_model(model_name, device)
     language_code = input_language or None
 
-    task = "transcribe"
-    notice: Optional[str] = None
-    if output_language:
-        if output_language == "en" and (language_code is None or language_code != "en"):
-            task = "translate"
-        elif language_code and output_language != language_code:
-            notice = (
-                "Whisper only supports translation to English. Output language has been left as the input language."
-            )
+    task = "translate" if language_code not in {None, "en"} else "transcribe"
     result = model.transcribe(str(audio_path), language=language_code, task=task)
 
     raw_text = result.get("text", "").strip()
@@ -248,7 +239,6 @@ def transcribe_pipeline(
         "raw_text": raw_text,
         "segments": segments,
         "diarized": diarized,
-        "notice": notice,
     }
 
 
@@ -364,7 +354,6 @@ def run_transcription_worker_entry(input_path: Path, output_path: Path) -> None:
             audio_path,
             payload["model"],
             payload.get("input_language"),
-            payload.get("output_language"),
             payload.get("device"),
             payload.get("diarize", False),
             payload.get("diarization_token"),
@@ -380,7 +369,6 @@ def run_transcription_subprocess(
     audio_path: Path,
     model_name: str,
     input_language: Optional[str],
-    output_language: Optional[str],
     device: Optional[str],
     diarize: bool,
     diarization_token: Optional[str],
@@ -392,7 +380,6 @@ def run_transcription_subprocess(
             "audio_path": str(audio_path),
             "model": model_name,
             "input_language": input_language,
-            "output_language": output_language,
             "device": device,
             "diarize": diarize,
             "diarization_token": diarization_token,
@@ -682,18 +669,6 @@ def launch_ui(args: argparse.Namespace) -> None:
                 self.input_language_combo.setCurrentIndex(index)
             language_row.addWidget(self.input_language_combo)
 
-            language_row.addSpacing(12)
-            language_row.addWidget(QtWidgets.QLabel("Output:"))
-            self.output_language_combo = QtWidgets.QComboBox()
-            for code, label in LANGUAGE_CHOICES:
-                self.output_language_combo.addItem(label, code)
-            default_output = getattr(self.args, "output_language", None) or "en"
-            index_out = self.output_language_combo.findData(default_output)
-            if index_out < 0:
-                index_out = self.output_language_combo.findData("en")
-            if index_out >= 0:
-                self.output_language_combo.setCurrentIndex(index_out)
-            language_row.addWidget(self.output_language_combo)
             language_row.addStretch()
             info_layout.addLayout(language_row)
 
@@ -794,7 +769,6 @@ def launch_ui(args: argparse.Namespace) -> None:
                 diarize,
                 token,
                 input_language,
-                output_language,
                 {},
             )
             thread = QtCore.QThread(self)
