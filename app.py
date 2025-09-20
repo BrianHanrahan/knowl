@@ -8,17 +8,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from dotenv import load_dotenv
-
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
 import whisper
+from dotenv import load_dotenv
 
 
 DEFAULT_SAMPLE_RATE = 16_000
 TRANSCRIPT_DIR = Path.home() / "Documents" / "transcriptions"
 DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_CLEAN_PROMPT = (
+    "You are an expert copy editor tasked with cleaning a noisy automatic speech transcript. "
+    "Improve grammar, punctuation, and clarity while keeping the speakers’ intent. If you insert or replace "
+    "words that were unclear, wrap your replacements in square brackets, e.g. ‘[the store]’. Preserve existing "
+    "timestamps and speaker labels exactly. Return only the revised transcript text."
+)
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
@@ -207,6 +213,49 @@ def save_transcription_text(text: str) -> Path:
     return path
 
 
+def clean_transcript_with_openai(transcript: str, prompt: str, model: str) -> str:
+    try:
+        from openai import OpenAI
+    except ImportError as exc:  # noqa: F401
+        raise RuntimeError(
+            "The 'openai' package is not installed. Install it with 'pip install openai'."
+        ) from exc
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set; cannot clean transcript with OpenAI.")
+    client = OpenAI(api_key=api_key)
+
+    system_message = {
+        "role": "system",
+        "content": [
+            {
+                "type": "text",
+                "text": "You polish speech transcripts produced by automatic recognition systems and return only the cleaned transcript.",
+            }
+        ],
+    }
+    user_message = {
+        "role": "user",
+        "content": [
+            {
+                "type": "text",
+                "text": f"{prompt.strip()}\n\nTranscript:\n{transcript.strip()}",
+            }
+        ],
+    }
+
+    response = client.responses.create(
+        model=model,
+        input=[system_message, user_message],
+        temperature=0.2,
+    )
+
+    cleaned = response.output_text.strip()
+    if not cleaned:
+        raise RuntimeError("OpenAI did not return any content.")
+    return cleaned
+
+
 class AudioRecorder:
     """Manage a start/stop microphone recording session."""
 
@@ -327,6 +376,49 @@ def launch_ui(args: argparse.Namespace) -> None:
 
             self.finished.emit(result, error)
 
+    class OpenAICleanupWorker(QtCore.QObject):
+        finished = QtCore.Signal(object, object)  # cleaned_text, error
+
+        def __init__(self, transcript: str, prompt: str, model: str) -> None:
+            super().__init__()
+            self.transcript = transcript
+            self.prompt = prompt
+            self.model = model
+
+        @QtCore.Slot()
+        def run(self) -> None:
+            try:
+                cleaned_text = clean_transcript_with_openai(self.transcript, self.prompt, self.model)
+                self.finished.emit(cleaned_text, None)
+            except Exception as exc:  # noqa: BLE001
+                self.finished.emit("", str(exc))
+
+    class PromptDialog(QtWidgets.QDialog):
+        def __init__(self, parent: Optional[QtWidgets.QWidget], default_prompt: str) -> None:
+            super().__init__(parent)
+            self.setWindowTitle("OpenAI Cleanup Prompt")
+            layout = QtWidgets.QVBoxLayout(self)
+
+            label = QtWidgets.QLabel(
+                "Review or edit the prompt that will be sent to OpenAI along with the transcript."
+            )
+            label.setWordWrap(True)
+            layout.addWidget(label)
+
+            self.text_edit = QtWidgets.QPlainTextEdit(default_prompt)
+            self.text_edit.setMinimumHeight(200)
+            layout.addWidget(self.text_edit)
+
+            button_box = QtWidgets.QDialogButtonBox(
+                QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+            )
+            button_box.accepted.connect(self.accept)
+            button_box.rejected.connect(self.reject)
+            layout.addWidget(button_box)
+
+        def prompt_text(self) -> str:
+            return self.text_edit.toPlainText()
+
     class TranscriberWindow(QtWidgets.QMainWindow):
         def __init__(self, args: argparse.Namespace) -> None:
             super().__init__()
@@ -337,6 +429,8 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.transcription_files: List[Path] = []
             self.worker_thread: Optional[QtCore.QThread] = None
             self.worker: Optional[TranscriptionWorker] = None
+            self.clean_worker_thread: Optional[QtCore.QThread] = None
+            self.clean_worker: Optional[OpenAICleanupWorker] = None
             self.current_segments: List[Dict] = []
             self.speaker_names: Dict[str, str] = {}
             self.current_saved_path: Optional[Path] = None
@@ -400,10 +494,18 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.diarize_checkbox.setChecked(self.args.diarize)
             info_layout.addWidget(self.diarize_checkbox)
 
+            button_row = QtWidgets.QHBoxLayout()
+            info_layout.addLayout(button_row)
+
             self.rename_button = QtWidgets.QPushButton("Rename Speakers")
             self.rename_button.setEnabled(False)
             self.rename_button.clicked.connect(self.rename_speakers)
-            info_layout.addWidget(self.rename_button)
+            button_row.addWidget(self.rename_button)
+
+            self.clean_button = QtWidgets.QPushButton("Clean with OpenAI")
+            self.clean_button.setEnabled(False)
+            self.clean_button.clicked.connect(self.clean_with_openai)
+            button_row.addWidget(self.clean_button)
 
             header_layout.addStretch()
 
@@ -449,6 +551,7 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.record_button.setEnabled(True)
             self.status_label.setText("Recording… press Stop to transcribe")
             self.timer.start()
+            self.clean_button.setEnabled(False)
 
         def stop_recording(self) -> None:
             self.record_button.setEnabled(False)
@@ -492,6 +595,7 @@ def launch_ui(args: argparse.Namespace) -> None:
             if error:
                 self.status_label.setText("Transcription failed")
                 QtWidgets.QMessageBox.critical(self, "Transcription Error", str(error))
+                self.update_clean_button_state()
                 return
 
             if not isinstance(result, dict):
@@ -521,6 +625,8 @@ def launch_ui(args: argparse.Namespace) -> None:
                 self.select_file(self.current_saved_path)
             elif not segments:
                 self.transcript_edit.setPlainText(formatted_text)
+
+            self.update_clean_button_state()
 
         def update_timer(self) -> None:
             if not self.is_recording:
@@ -561,8 +667,13 @@ def launch_ui(args: argparse.Namespace) -> None:
         def on_list_selected(self, row: int) -> None:
             if row < 0 or row >= len(self.transcription_files):
                 return
-            self.display_file(self.transcription_files[row])
+            path = self.transcription_files[row]
+            self.display_file(path)
+            self.current_saved_path = path
+            self.current_segments = []
+            self.speaker_names = {}
             self.rename_button.setEnabled(False)
+            self.update_clean_button_state()
 
         def display_file(self, path: Path) -> None:
             try:
@@ -583,6 +694,7 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.display_file(path)
             if self.current_segments:
                 self.rename_button.setEnabled(True)
+            self.update_clean_button_state()
 
         def rename_speakers(self) -> None:
             if not self.current_segments or not self.speaker_names:
@@ -624,6 +736,84 @@ def launch_ui(args: argparse.Namespace) -> None:
                         "Save Error",
                         f"Could not update transcript file: {exc}",
                     )
+            self.update_clean_button_state()
+
+        def clean_with_openai(self) -> None:
+            transcript = self.transcript_edit.toPlainText().strip()
+            if not transcript:
+                QtWidgets.QMessageBox.information(self, "Nothing to clean", "There is no transcript to send to OpenAI.")
+                return
+
+            if not os.getenv("OPENAI_API_KEY"):
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Missing API Key",
+                    "OPENAI_API_KEY is not set. Add it to your .env file before using OpenAI cleanup.",
+                )
+                return
+
+            prompt_dialog = PromptDialog(self, DEFAULT_CLEAN_PROMPT)
+            if prompt_dialog.exec() != QtWidgets.QDialog.Accepted:
+                return
+
+            prompt_text = prompt_dialog.prompt_text().strip() or DEFAULT_CLEAN_PROMPT
+
+            worker = OpenAICleanupWorker(transcript, prompt_text, DEFAULT_OPENAI_MODEL)
+            thread = QtCore.QThread(self)
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+            worker.finished.connect(self.handle_cleanup_finished)
+            worker.finished.connect(worker.deleteLater)
+            worker.finished.connect(thread.quit)
+            thread.finished.connect(thread.deleteLater)
+            thread.start()
+            self.clean_worker_thread = thread
+            self.clean_worker = worker
+            self.clean_button.setEnabled(False)
+            self.status_label.setText("Cleaning transcript with OpenAI…")
+
+        def handle_cleanup_finished(self, cleaned_text: object, error: object) -> None:
+            if self.clean_worker_thread is not None:
+                self.clean_worker_thread = None
+            self.clean_worker = None
+
+            if error:
+                self.status_label.setText("OpenAI cleanup failed")
+                QtWidgets.QMessageBox.critical(self, "OpenAI Error", str(error))
+                self.update_clean_button_state()
+                return
+
+            if not isinstance(cleaned_text, str) or not cleaned_text.strip():
+                self.status_label.setText("OpenAI cleanup returned no text")
+                QtWidgets.QMessageBox.warning(
+                    self, "OpenAI Cleanup", "OpenAI did not return any cleaned transcript."
+                )
+                self.update_clean_button_state()
+                return
+
+            cleaned_text = cleaned_text.strip()
+            self.transcript_edit.setPlainText(cleaned_text)
+            self.status_label.setText("Transcript cleaned with OpenAI")
+
+            if self.current_saved_path:
+                try:
+                    self.current_saved_path.write_text(cleaned_text + "\n", encoding="utf-8")
+                except OSError as exc:
+                    QtWidgets.QMessageBox.warning(
+                        self,
+                        "Save Error",
+                        f"Could not update transcript file: {exc}",
+                    )
+
+            self.current_segments = []
+            self.speaker_names = {}
+            self.rename_button.setEnabled(False)
+            self.update_clean_button_state()
+
+        def update_clean_button_state(self) -> None:
+            has_text = bool(self.transcript_edit.toPlainText().strip())
+            has_key = bool(os.getenv("OPENAI_API_KEY"))
+            self.clean_button.setEnabled(has_text and has_key)
 
         def closeEvent(self, event: QtCore.QEvent) -> None:  # noqa: D401
             if self.is_recording:
@@ -633,13 +823,39 @@ def launch_ui(args: argparse.Namespace) -> None:
             if self.worker_thread is not None:
                 self.worker_thread.quit()
                 self.worker_thread.wait(2000)
+            if self.clean_worker_thread is not None:
+                self.clean_worker_thread.quit()
+                self.clean_worker_thread.wait(2000)
             self.worker = None
+            self.clean_worker = None
             super().closeEvent(event)
 
     qt_app = QtWidgets.QApplication(sys.argv)
     window = TranscriberWindow(args)
     window.show()
     qt_app.exec()
+
+
+def prompt_for_cleanup(default_prompt: str) -> str:
+    print("\nDefault OpenAI cleanup prompt:\n")
+    print(default_prompt)
+    print("\nPress Enter to use this prompt, or type 'edit' to provide a custom one.")
+    response = input("> ").strip().lower()
+    if response in {"", "y", "yes"}:
+        return default_prompt
+    if response not in {"edit", "e"}:
+        return default_prompt
+
+    print("Enter your prompt. Submit with Ctrl-D (Ctrl-Z on Windows) when finished.\n")
+    lines: List[str] = []
+    try:
+        while True:
+            line = input()
+            lines.append(line)
+    except EOFError:
+        pass
+    custom = "\n".join(lines).strip()
+    return custom or default_prompt
 
 
 def parse_args() -> argparse.Namespace:
@@ -663,6 +879,8 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Map diarized speaker IDs to names (format SPEAKER_00=Alice). Can be provided multiple times.",
     )
+    parser.add_argument("--openai-clean", action="store_true", help="Send transcript to OpenAI for cleanup after transcription")
+    parser.add_argument("--openai-model", type=str, default=DEFAULT_OPENAI_MODEL, help="OpenAI model to use for cleanup")
     parser.add_argument("--list-devices", action="store_true", help="List available audio input devices and exit")
     parser.add_argument("--ui", action="store_true", help="Launch the graphical interface with start/stop controls")
     return parser.parse_args()
@@ -740,6 +958,15 @@ def main() -> None:
         final_text = result.get("raw_text", "")
 
     print("\nTranscription:\n" + final_text)
+
+    if args.openai_clean:
+        try:
+            prompt_text = prompt_for_cleanup(DEFAULT_CLEAN_PROMPT)
+            cleaned_text = clean_transcript_with_openai(final_text, prompt_text, args.openai_model)
+        except Exception as exc:  # noqa: BLE001
+            print(f"OpenAI cleanup failed: {exc}", file=sys.stderr)
+        else:
+            print("\nCleaned Transcript:\n" + cleaned_text)
 
 
 if __name__ == "__main__":

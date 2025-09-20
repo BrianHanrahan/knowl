@@ -9,6 +9,7 @@ This command-line tool captures audio from your microphone and transcribes it lo
 - Working microphone input device
 - `PySide6` (installed automatically via `requirements.txt`) for the desktop UI
 - Optional: Hugging Face access token (`PYANNOTE_AUTH_TOKEN`) to enable speaker diarization (you can place this in `.env`)
+- Optional: OpenAI API key (`OPENAI_API_KEY`) if you plan to run transcript cleanup
 
 ## Setup
 
@@ -39,6 +40,8 @@ Useful options:
 - `--diarize`: Run speaker diarization (requires Hugging Face token)
 - `--diarization-token`: Supply the Hugging Face token on the command line
 - `--speaker-label`: Map diarized speaker IDs to names, e.g. `--speaker-label SPEAKER_00=Alice` (repeatable)
+- `--openai-clean`: Send the finished transcript to OpenAI for cleanup (interactive prompt lets you adjust instructions)
+- `--openai-model`: Choose which OpenAI model to use (default: `gpt-4o-mini`)
 - `--ui`: Launch the graphical interface instead of running in the terminal
 
 For example, to record 15 seconds using device #2 and keep the audio file:
@@ -59,6 +62,7 @@ python app.py --ui
 - Press **Stop** to finish. The capture is transcribed locally and saved to `~/Documents/transcriptions/<YYMMDDHHMMSS>.txt`.
 - Toggle **Enable speaker diarization** to obtain speaker-attributed transcripts (requires a Hugging Face token).
 - Use **Rename Speakers** after diarization completes to replace `SPEAKER_00`-style labels with real names; the saved transcript updates automatically.
+- Press **Clean with OpenAI** to review and customize the cleanup prompt before sending the transcript to OpenAI; the returned version is written back to disk.
 - The transcript list (newest first) refreshes automatically. Selecting an entry updates the viewer with the stored text.
 
 ### Speaker Diarization
@@ -67,6 +71,13 @@ python app.py --ui
 2. Enable diarization via `--diarize` on the CLI or the checkbox in the UI.
 3. After transcription, assign friendly names either with repeated `--speaker-label SPEAKER_00=Alice` flags (CLI) or via the **Rename Speakers** button in the UI.
 4. Updated names are written back to the stored transcript files.
+
+### Transcript Cleanup with OpenAI
+
+1. Add `OPENAI_API_KEY` to your `.env` file (or export it in your shell).
+2. Run the CLI with `--openai-clean` or press **Clean with OpenAI** in the UI after transcription completes.
+3. Review the suggested prompt; tweak it to match your editing needs before the request is sent.
+4. The cleaned transcript replaces the on-screen text and is written back to the saved file.
 
 ## Troubleshooting
 

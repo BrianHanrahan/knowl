@@ -5,3 +5,4 @@ numpy
 PySide6
 pyannote.audio
 python-dotenv
+openai

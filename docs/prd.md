@@ -53,6 +53,7 @@
   - Viewer showing the latest or selected transcript text.
   - List of saved transcript files ordered by newest first, updating after each transcription.
   - Optional speaker diarization (requires Hugging Face token) and a rename dialog to relabel speakers post-transcription.
+  - Ability to send transcripts to OpenAI with an editable prompt, updating on-screen and persisted text once the response returns.
 
 ## 5. UX & Interaction Flow
 1. User optionally runs `python app.py --list-devices` to gather device indices.
@@ -67,7 +68,7 @@
    - The saved files list refreshes automatically, allowing quick browsing of prior sessions.
 
 ## 6. Technical Considerations
-- Dependencies: `sounddevice`, `soundfile`, `numpy`, `openai-whisper`, `ffmpeg`, PyTorch (transitive), `PySide6`, `python-dotenv` (to load local tokens/keys).
+- Dependencies: `sounddevice`, `soundfile`, `numpy`, `openai-whisper`, `ffmpeg`, PyTorch (transitive), `PySide6`, `python-dotenv` (to load local tokens/keys), `openai`.
 - Environment: Python 3.9+, microphone permissions, accessible `ffmpeg` executable on PATH.
 - Performance: Whisper load time proportional to model size; models are cached per process to avoid redundant loads.
 - Memory: Larger models require significant RAM/VRAM; default remains `base` to balance accuracy and speed.
@@ -100,6 +101,7 @@
    - Implement PySide6 window with start/stop toggle, elapsed timer, and status updates. ✅
    - Persist transcripts to `~/Documents/transcriptions` and list them newest-first. ✅
    - Surface transcription results in-app. ✅
+   - Integrate optional OpenAI cleanup workflow with customizable prompt. ✅
 3. **Reliability & Automation (Planned)**
    - Add unit/integration tests with mocked audio input.
    - Automate dependency checks (ffmpeg detection) with improved messaging.
