@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from dotenv import load_dotenv
+
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
@@ -17,6 +19,8 @@ import whisper
 DEFAULT_SAMPLE_RATE = 16_000
 TRANSCRIPT_DIR = Path.home() / "Documents" / "transcriptions"
 DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
+
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 
 def list_audio_devices() -> None:

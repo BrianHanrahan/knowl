@@ -67,7 +67,7 @@
    - The saved files list refreshes automatically, allowing quick browsing of prior sessions.
 
 ## 6. Technical Considerations
-- Dependencies: `sounddevice`, `soundfile`, `numpy`, `openai-whisper`, `ffmpeg`, PyTorch (transitive), `PySide6`.
+- Dependencies: `sounddevice`, `soundfile`, `numpy`, `openai-whisper`, `ffmpeg`, PyTorch (transitive), `PySide6`, `python-dotenv` (to load local tokens/keys).
 - Environment: Python 3.9+, microphone permissions, accessible `ffmpeg` executable on PATH.
 - Performance: Whisper load time proportional to model size; models are cached per process to avoid redundant loads.
 - Memory: Larger models require significant RAM/VRAM; default remains `base` to balance accuracy and speed.

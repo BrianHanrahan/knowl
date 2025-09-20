@@ -8,7 +8,7 @@ This command-line tool captures audio from your microphone and transcribes it lo
 - `ffmpeg` available on your PATH (required by Whisper)
 - Working microphone input device
 - `PySide6` (installed automatically via `requirements.txt`) for the desktop UI
-- Optional: Hugging Face access token (`PYANNOTE_AUTH_TOKEN`) to enable speaker diarization
+- Optional: Hugging Face access token (`PYANNOTE_AUTH_TOKEN`) to enable speaker diarization (you can place this in `.env`)
 
 ## Setup
 
