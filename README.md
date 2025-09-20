@@ -36,6 +36,7 @@ Useful options:
 - `--list-devices`: Show available microphone devices
 - `--device`: Use a specific device index from `--list-devices`
 - `--language`: Provide a language hint (e.g. `--language en`)
+- `--output-language`: Desired output language code (translation currently only supports English)
 - `--whisper-device`: Pass `cuda` to use a GPU-enabled setup (if available)
 - `--diarize`: Run speaker diarization (requires Hugging Face token)
 - `--diarization-token`: Supply the Hugging Face token on the command line
@@ -61,6 +62,7 @@ python app.py --ui
 - Press **Transcribe** to start recording; the button switches to **Stop** and the timer counts elapsed seconds.
 - Press **Stop** to finish. The capture is transcribed locally and saved to `~/Documents/transcriptions/<YYMMDDHHMMSS>.txt`.
 - Toggle **Enable speaker diarization** to obtain speaker-attributed transcripts (requires a Hugging Face token).
+- Use the **Input** and **Output** language dropdowns to guide Whisper. (Translations are limited to English output when supported.)
 - Use **Rename Speakers** after diarization completes to replace `SPEAKER_00`-style labels with real names; the saved transcript updates automatically.
 - Press **Clean with OpenAI** to review and customize the cleanup prompt before sending the transcript to OpenAI; the returned version is written back to disk.
 - Use the trash can icon beside a transcript to delete it from disk.

@@ -31,6 +31,40 @@ DEFAULT_CLEAN_PROMPT = (
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
+LANGUAGE_CHOICES: List[tuple[str, str]] = [
+    ("af", "Afrikaans"),
+    ("ar", "Arabic"),
+    ("bn", "Bengali"),
+    ("zh", "Chinese"),
+    ("cs", "Czech"),
+    ("da", "Danish"),
+    ("nl", "Dutch"),
+    ("en", "English"),
+    ("fi", "Finnish"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("el", "Greek"),
+    ("he", "Hebrew"),
+    ("hi", "Hindi"),
+    ("hu", "Hungarian"),
+    ("id", "Indonesian"),
+    ("it", "Italian"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("ms", "Malay"),
+    ("no", "Norwegian"),
+    ("pl", "Polish"),
+    ("pt", "Portuguese"),
+    ("ru", "Russian"),
+    ("es", "Spanish"),
+    ("sv", "Swedish"),
+    ("ta", "Tamil"),
+    ("th", "Thai"),
+    ("tr", "Turkish"),
+    ("uk", "Ukrainian"),
+    ("vi", "Vietnamese"),
+]
+
 
 def list_audio_devices() -> None:
     """Print available audio input devices."""
@@ -179,13 +213,26 @@ def parse_speaker_labels(values: List[str]) -> Dict[str, str]:
 def transcribe_pipeline(
     audio_path: Path,
     model_name: str,
-    language: Optional[str],
+    input_language: Optional[str],
+    output_language: Optional[str],
     device: Optional[str],
     diarize: bool,
     diarization_token: Optional[str],
 ) -> Dict[str, object]:
     model = load_whisper_model(model_name, device)
-    result = model.transcribe(str(audio_path), language=language)
+    language_code = input_language or None
+
+    task = "transcribe"
+    notice: Optional[str] = None
+    if output_language and language_code:
+        if output_language != language_code:
+            if output_language == "en":
+                task = "translate"
+            else:
+                notice = (
+                    "Whisper only supports translation to English. Output language has been left as the input language."
+                )
+    result = model.transcribe(str(audio_path), language=language_code, task=task)
 
     raw_text = result.get("text", "").strip()
     whisper_segments = result.get("segments", [])
@@ -201,6 +248,7 @@ def transcribe_pipeline(
         "raw_text": raw_text,
         "segments": segments,
         "diarized": diarized,
+        "notice": notice,
     }
 
 
@@ -315,7 +363,8 @@ def run_transcription_worker_entry(input_path: Path, output_path: Path) -> None:
         result = transcribe_pipeline(
             audio_path,
             payload["model"],
-            payload.get("language"),
+            payload.get("input_language"),
+            payload.get("output_language"),
             payload.get("device"),
             payload.get("diarize", False),
             payload.get("diarization_token"),
@@ -330,7 +379,8 @@ def run_transcription_worker_entry(input_path: Path, output_path: Path) -> None:
 def run_transcription_subprocess(
     audio_path: Path,
     model_name: str,
-    language: Optional[str],
+    input_language: Optional[str],
+    output_language: Optional[str],
     device: Optional[str],
     diarize: bool,
     diarization_token: Optional[str],
@@ -341,7 +391,8 @@ def run_transcription_subprocess(
         payload = {
             "audio_path": str(audio_path),
             "model": model_name,
-            "language": language,
+            "input_language": input_language,
+            "output_language": output_language,
             "device": device,
             "diarize": diarize,
             "diarization_token": diarization_token,
@@ -446,6 +497,8 @@ def launch_ui(args: argparse.Namespace) -> None:
             args: argparse.Namespace,
             diarize: bool,
             diarization_token: Optional[str],
+            input_language: Optional[str],
+            output_language: Optional[str],
             speaker_map: Optional[Dict[str, str]] = None,
         ) -> None:
             super().__init__()
@@ -454,6 +507,8 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.args = args
             self.diarize = diarize
             self.diarization_token = diarization_token
+            self.input_language = input_language
+            self.output_language = output_language
             self.speaker_map = speaker_map or {}
 
         @QtCore.Slot()
@@ -473,7 +528,8 @@ def launch_ui(args: argparse.Namespace) -> None:
                 result = run_transcription_subprocess(
                     temp_path,
                     self.args.model,
-                    self.args.language,
+                    self.input_language,
+                    self.output_language,
                     self.args.whisper_device,
                     self.diarize,
                     self.diarization_token,
@@ -613,6 +669,34 @@ def launch_ui(args: argparse.Namespace) -> None:
             timer_row.addStretch()
             info_layout.addLayout(timer_row)
 
+            language_row = QtWidgets.QHBoxLayout()
+            language_row.addWidget(QtWidgets.QLabel("Input:"))
+            self.input_language_combo = QtWidgets.QComboBox()
+            for code, label in LANGUAGE_CHOICES:
+                self.input_language_combo.addItem(label, code)
+            default_input = self.args.language or "en"
+            index = self.input_language_combo.findData(default_input)
+            if index < 0:
+                index = self.input_language_combo.findData("en")
+            if index >= 0:
+                self.input_language_combo.setCurrentIndex(index)
+            language_row.addWidget(self.input_language_combo)
+
+            language_row.addSpacing(12)
+            language_row.addWidget(QtWidgets.QLabel("Output:"))
+            self.output_language_combo = QtWidgets.QComboBox()
+            for code, label in LANGUAGE_CHOICES:
+                self.output_language_combo.addItem(label, code)
+            default_output = getattr(self.args, "output_language", None) or "en"
+            index_out = self.output_language_combo.findData(default_output)
+            if index_out < 0:
+                index_out = self.output_language_combo.findData("en")
+            if index_out >= 0:
+                self.output_language_combo.setCurrentIndex(index_out)
+            language_row.addWidget(self.output_language_combo)
+            language_row.addStretch()
+            info_layout.addLayout(language_row)
+
             self.diarize_checkbox = QtWidgets.QCheckBox("Enable speaker diarization")
             self.diarize_checkbox.setChecked(self.args.diarize)
             info_layout.addWidget(self.diarize_checkbox)
@@ -700,7 +784,19 @@ def launch_ui(args: argparse.Namespace) -> None:
                 )
                 diarize = False
 
-            worker = TranscriptionWorker(audio, self.args.sample_rate, self.args, diarize, token, {})
+            input_language = self.input_language_combo.currentData()
+            output_language = self.output_language_combo.currentData()
+
+            worker = TranscriptionWorker(
+                audio,
+                self.args.sample_rate,
+                self.args,
+                diarize,
+                token,
+                input_language,
+                output_language,
+                {},
+            )
             thread = QtCore.QThread(self)
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
@@ -731,7 +827,11 @@ def launch_ui(args: argparse.Namespace) -> None:
 
             formatted_text = result.get("formatted_text") or result.get("raw_text", "")
             self.transcript_edit.setPlainText(formatted_text)
-            self.status_label.setText("Transcription complete")
+            notice = result.get("notice")
+            if notice:
+                self.status_label.setText(notice)
+            else:
+                self.status_label.setText("Transcription complete")
             self.timer_label.setText("00:00")
 
             saved_path_str = result.get("saved_path") or ""
@@ -1123,7 +1223,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--channels", type=int, default=1, help="Number of input channels")
     parser.add_argument("--device", type=int, default=None, help="Sounddevice input device index")
     parser.add_argument("--model", type=str, default="base", help="Whisper model size to load")
-    parser.add_argument("--language", type=str, default=None, help="Language code hint for transcription")
+    parser.add_argument("--language", type=str, default="en", help="Input language code (ISO-639-1)")
     parser.add_argument("--save-audio", type=Path, default=None, help="Optional path to save the recorded WAV audio (CLI only)")
     parser.add_argument("--whisper-device", type=str, default=None, help="Device to run Whisper on (cpu, cuda, etc.)")
     parser.add_argument("--diarize", action="store_true", help="Enable speaker diarization using Pyannote models")
@@ -1136,6 +1236,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--openai-clean", action="store_true", help="Send transcript to OpenAI for cleanup after transcription")
     parser.add_argument("--openai-model", type=str, default=DEFAULT_OPENAI_MODEL, help="OpenAI model to use for cleanup")
+    parser.add_argument("--output-language", type=str, default="en", help="Desired output language code (English-only translation supported)")
     parser.add_argument("--list-devices", action="store_true", help="List available audio input devices and exit")
     parser.add_argument("--ui", action="store_true", help="Launch the graphical interface with start/stop controls")
     parser.add_argument("--openai-clean-worker", action="store_true", help=argparse.SUPPRESS)
@@ -1233,6 +1334,10 @@ def main() -> None:
         final_text = result.get("raw_text", "")
 
     print("\nTranscription:\n" + final_text)
+
+    notice = result.get("notice")
+    if notice:
+        print(f"\nNote: {notice}")
 
     if args.openai_clean:
         try:
