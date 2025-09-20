@@ -54,6 +54,7 @@
   - List of saved transcript files ordered by newest first, updating after each transcription.
   - Optional speaker diarization (requires Hugging Face token) and a rename dialog to relabel speakers post-transcription.
   - Ability to send transcripts to OpenAI with an editable prompt, leveraging web search when useful, and updating on-screen and persisted text once the response returns.
+  - Undo control to restore the previous saved transcript after cleanup operations.
   - Quick delete option (trash icon) beside each transcript entry to remove it from disk.
 
 ## 5. UX & Interaction Flow

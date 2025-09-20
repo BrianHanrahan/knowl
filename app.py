@@ -540,7 +540,7 @@ def launch_ui(args: argparse.Namespace) -> None:
         def prompt_text(self) -> str:
             return self.text_edit.toPlainText()
 
-    class TranscriberWindow(QtWidgets.QMainWindow):
+class TranscriberWindow(QtWidgets.QMainWindow):
         def __init__(self, args: argparse.Namespace) -> None:
             super().__init__()
             self.args = args
@@ -555,6 +555,8 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.current_segments: List[Dict] = []
             self.speaker_names: Dict[str, str] = {}
             self.current_saved_path: Optional[Path] = None
+            self.backup_text: Optional[str] = None
+            self.undo_available = False
 
             self.setWindowTitle("Whisper Microphone Transcriber")
             self.resize(960, 600)
@@ -626,6 +628,11 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.clean_button.setEnabled(False)
             self.clean_button.clicked.connect(self.clean_with_openai)
             button_row.addWidget(self.clean_button)
+
+            self.undo_button = QtWidgets.QPushButton("Undo Last Edit")
+            self.undo_button.setEnabled(False)
+            self.undo_button.clicked.connect(self.undo_last_edit)
+            button_row.addWidget(self.undo_button)
 
             header_layout.addStretch()
 
@@ -745,6 +752,9 @@ def launch_ui(args: argparse.Namespace) -> None:
             elif not segments:
                 self.transcript_edit.setPlainText(formatted_text)
 
+            self.backup_text = None
+            self.undo_available = False
+            self.undo_button.setEnabled(False)
             self.update_clean_button_state()
 
         def update_timer(self) -> None:
@@ -935,6 +945,11 @@ def launch_ui(args: argparse.Namespace) -> None:
 
             prompt_text = prompt_dialog.prompt_text().strip() or DEFAULT_CLEAN_PROMPT
 
+            # Create a backup before starting the cleanup process.
+            self.backup_text = self.transcript_edit.toPlainText()
+            self.undo_available = False
+            self.undo_button.setEnabled(False)
+
             worker = OpenAICleanupWorker(transcript, prompt_text, DEFAULT_OPENAI_MODEL)
             thread = QtCore.QThread(self)
             worker.moveToThread(thread)
@@ -957,6 +972,16 @@ def launch_ui(args: argparse.Namespace) -> None:
             if error:
                 self.status_label.setText("OpenAI cleanup failed")
                 QtWidgets.QMessageBox.critical(self, "OpenAI Error", str(error))
+                # Restore backup if cleanup failed.
+                if self.backup_text is not None:
+                    self.transcript_edit.setPlainText(self.backup_text)
+                    if self.current_saved_path:
+                        try:
+                            self.current_saved_path.write_text(self.backup_text + "\n", encoding="utf-8")
+                        except OSError:
+                            pass
+                    self.undo_available = False
+                    self.undo_button.setEnabled(False)
                 self.update_clean_button_state()
                 return
 
@@ -965,6 +990,15 @@ def launch_ui(args: argparse.Namespace) -> None:
                 QtWidgets.QMessageBox.warning(
                     self, "OpenAI Cleanup", "OpenAI did not return any cleaned transcript."
                 )
+                if self.backup_text is not None:
+                    self.transcript_edit.setPlainText(self.backup_text)
+                    if self.current_saved_path:
+                        try:
+                            self.current_saved_path.write_text(self.backup_text + "\n", encoding="utf-8")
+                        except OSError:
+                            pass
+                    self.undo_available = False
+                    self.undo_button.setEnabled(False)
                 self.update_clean_button_state()
                 return
 
@@ -981,15 +1015,60 @@ def launch_ui(args: argparse.Namespace) -> None:
                         "Save Error",
                         f"Could not update transcript file: {exc}",
                     )
+                    if self.backup_text is not None:
+                        try:
+                            self.current_saved_path.write_text(self.backup_text + "\n", encoding="utf-8")
+                        except OSError:
+                            pass
+                        self.transcript_edit.setPlainText(self.backup_text)
+                        cleaned_text = self.backup_text
+                        self.status_label.setText("Transcript restoration due to save error")
 
             self.current_segments = []
             self.speaker_names = {}
             self.update_clean_button_state()
 
+            if self.backup_text is not None and cleaned_text != self.backup_text:
+                self.undo_available = True
+                self.undo_button.setEnabled(True)
+            else:
+                self.undo_available = False
+                self.undo_button.setEnabled(False)
+
         def update_clean_button_state(self) -> None:
             has_text = bool(self.transcript_edit.toPlainText().strip())
             has_key = bool(os.getenv("OPENAI_API_KEY"))
             self.clean_button.setEnabled(has_text and has_key)
+
+        def undo_last_edit(self) -> None:
+            if not self.undo_available or self.backup_text is None:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Nothing to undo",
+                    "There is no previous version to restore.",
+                )
+                return
+
+            restored = self.backup_text
+            self.transcript_edit.setPlainText(restored)
+            if self.current_saved_path:
+                try:
+                    self.current_saved_path.write_text(restored + "\n", encoding="utf-8")
+                except OSError as exc:
+                    QtWidgets.QMessageBox.warning(
+                        self,
+                        "Save Error",
+                        f"Could not restore transcript: {exc}",
+                    )
+                    return
+
+            self.status_label.setText("Transcript restored to previous version")
+            self.current_segments = []
+            self.speaker_names = {}
+            self.undo_available = False
+            self.undo_button.setEnabled(False)
+            self.backup_text = None
+            self.update_clean_button_state()
 
         def closeEvent(self, event: QtCore.QEvent) -> None:  # noqa: D401
             if self.is_recording:
@@ -1006,10 +1085,10 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.clean_worker = None
             super().closeEvent(event)
 
-    qt_app = QtWidgets.QApplication(sys.argv)
-    window = TranscriberWindow(args)
-    window.show()
-    qt_app.exec()
+qt_app = QtWidgets.QApplication(sys.argv)
+window = TranscriberWindow(args)
+window.show()
+qt_app.exec()
 
 
 def prompt_for_cleanup(default_prompt: str) -> str:
