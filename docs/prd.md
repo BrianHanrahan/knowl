@@ -54,6 +54,7 @@
   - List of saved transcript files ordered by newest first, updating after each transcription.
   - Optional speaker diarization (requires Hugging Face token) and a rename dialog to relabel speakers post-transcription.
   - Ability to send transcripts to OpenAI with an editable prompt, updating on-screen and persisted text once the response returns.
+  - Quick delete option (trash icon) beside each transcript entry to remove it from disk.
 
 ## 5. UX & Interaction Flow
 1. User optionally runs `python app.py --list-devices` to gather device indices.

@@ -63,6 +63,7 @@ python app.py --ui
 - Toggle **Enable speaker diarization** to obtain speaker-attributed transcripts (requires a Hugging Face token).
 - Use **Rename Speakers** after diarization completes to replace `SPEAKER_00`-style labels with real names; the saved transcript updates automatically.
 - Press **Clean with OpenAI** to review and customize the cleanup prompt before sending the transcript to OpenAI; the returned version is written back to disk.
+- Use the trash can icon beside a transcript to delete it from disk.
 - The transcript list (newest first) refreshes automatically. Selecting an entry updates the viewer with the stored text.
 
 ### Speaker Diarization

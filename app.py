@@ -524,6 +524,7 @@ def launch_ui(args: argparse.Namespace) -> None:
             sidebar_layout.addWidget(list_title)
 
             self.list_widget = QtWidgets.QListWidget()
+            self.list_widget.setSpacing(2)
             self.list_widget.currentRowChanged.connect(self.on_list_selected)
             sidebar_layout.addWidget(self.list_widget, stretch=1)
 
@@ -656,8 +657,25 @@ def launch_ui(args: argparse.Namespace) -> None:
                 self.list_widget.setEnabled(True)
                 for path in files:
                     modified = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-                    self.list_widget.addItem(f"{modified}  {path.name}")
+                    item = QtWidgets.QListWidgetItem()
+                    container = QtWidgets.QWidget()
+                    layout = QtWidgets.QHBoxLayout(container)
+                    layout.setContentsMargins(8, 2, 2, 2)
+                    label = QtWidgets.QLabel(f"{modified}  {path.name}")
+                    layout.addWidget(label)
+                    layout.addStretch()
+                    delete_button = QtWidgets.QToolButton()
+                    delete_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_TrashIcon))
+                    delete_button.setToolTip("Delete transcript")
+                    delete_button.setCursor(QtCore.Qt.PointingHandCursor)
+                    delete_button.clicked.connect(lambda _=False, p=path: self.delete_transcript(p))
+                    layout.addWidget(delete_button)
+                    container.setLayout(layout)
+                    item.setSizeHint(container.sizeHint())
+                    self.list_widget.addItem(item)
+                    self.list_widget.setItemWidget(item, container)
             self.list_widget.blockSignals(False)
+            self.update_clean_button_state()
 
         def sync_transcripts(self) -> None:
             current = self.gather_files()
@@ -683,6 +701,7 @@ def launch_ui(args: argparse.Namespace) -> None:
                 return
             self.transcript_edit.setPlainText(content)
             self.status_label.setText(f"Showing {path.name}")
+            self.update_clean_button_state()
 
         def select_file(self, path: Path) -> None:
             if path not in self.transcription_files:
@@ -694,6 +713,37 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.display_file(path)
             if self.current_segments:
                 self.rename_button.setEnabled(True)
+            self.update_clean_button_state()
+
+        def delete_transcript(self, path: Path) -> None:
+            if not path.exists():
+                self.refresh_file_list()
+                return
+
+            reply = QtWidgets.QMessageBox.question(
+                self,
+                "Delete Transcript",
+                f"Delete '{path.name}'? This cannot be undone.",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            )
+            if reply != QtWidgets.QMessageBox.Yes:
+                return
+
+            try:
+                path.unlink()
+            except OSError as exc:
+                QtWidgets.QMessageBox.warning(self, "Delete Failed", f"Could not delete file: {exc}")
+                return
+
+            if self.current_saved_path and self.current_saved_path.resolve() == path.resolve():
+                self.current_saved_path = None
+                self.transcript_edit.clear()
+                self.status_label.setText("Ready")
+                self.current_segments = []
+                self.speaker_names = {}
+                self.rename_button.setEnabled(False)
+
+            self.refresh_file_list()
             self.update_clean_button_state()
 
         def rename_speakers(self) -> None:
