@@ -225,32 +225,22 @@ def clean_transcript_with_openai(transcript: str, prompt: str, model: str) -> st
         raise RuntimeError("OPENAI_API_KEY is not set; cannot clean transcript with OpenAI.")
     client = OpenAI(api_key=api_key)
 
-    system_message = {
-        "role": "system",
-        "content": [
-            {
-                "type": "text",
-                "text": "You polish speech transcripts produced by automatic recognition systems and return only the cleaned transcript.",
-            }
-        ],
-    }
-    user_message = {
-        "role": "user",
-        "content": [
-            {
-                "type": "text",
-                "text": f"{prompt.strip()}\n\nTranscript:\n{transcript.strip()}",
-            }
-        ],
-    }
-
     response = client.responses.create(
         model=model,
-        input=[system_message, user_message],
+        input=[
+            {
+                "role": "system",
+                "content": f"You polish speech transcripts produced by automatic recognition systems and return only the cleaned transcript.",
+            },
+            {
+                "role": "user",
+                "content": f"{prompt.strip()}\n\nTranscript:\n{transcript.strip()}",
+            },
+        ],
         temperature=0.2,
     )
 
-    cleaned = response.output_text.strip()
+    cleaned = (response.output_text or "").strip()
     if not cleaned:
         raise RuntimeError("OpenAI did not return any content.")
     return cleaned
