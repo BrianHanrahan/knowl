@@ -485,7 +485,6 @@ def launch_ui(args: argparse.Namespace) -> None:
             diarize: bool,
             diarization_token: Optional[str],
             input_language: Optional[str],
-            output_language: Optional[str],
             speaker_map: Optional[Dict[str, str]] = None,
         ) -> None:
             super().__init__()
@@ -495,7 +494,6 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.diarize = diarize
             self.diarization_token = diarization_token
             self.input_language = input_language
-            self.output_language = output_language
             self.speaker_map = speaker_map or {}
 
         @QtCore.Slot()
@@ -516,7 +514,6 @@ def launch_ui(args: argparse.Namespace) -> None:
                     temp_path,
                     self.args.model,
                     self.input_language,
-                    self.output_language,
                     self.args.whisper_device,
                     self.diarize,
                     self.diarization_token,
@@ -760,8 +757,6 @@ def launch_ui(args: argparse.Namespace) -> None:
                 diarize = False
 
             input_language = self.input_language_combo.currentData()
-            output_language = self.output_language_combo.currentData()
-
             worker = TranscriptionWorker(
                 audio,
                 self.args.sample_rate,
