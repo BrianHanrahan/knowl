@@ -488,7 +488,6 @@ def launch_ui(args: argparse.Namespace) -> None:
             info_layout.addLayout(button_row)
 
             self.rename_button = QtWidgets.QPushButton("Rename Speakers")
-            self.rename_button.setEnabled(False)
             self.rename_button.clicked.connect(self.rename_speakers)
             button_row.addWidget(self.rename_button)
 
@@ -609,8 +608,6 @@ def launch_ui(args: argparse.Namespace) -> None:
                 self.speaker_names = {}
             self.current_segments = segments
 
-            self.rename_button.setEnabled(bool(self.speaker_names))
-
             self.refresh_file_list()
             if self.current_saved_path:
                 self.select_file(self.current_saved_path)
@@ -685,12 +682,9 @@ def launch_ui(args: argparse.Namespace) -> None:
             self.display_file(path)
             self.current_saved_path = path
 
-            if keep_segments:
-                self.rename_button.setEnabled(True)
-            else:
+            if not keep_segments:
                 self.current_segments = []
                 self.speaker_names = {}
-                self.rename_button.setEnabled(False)
             self.update_clean_button_state()
 
         def display_file(self, path: Path) -> None:
@@ -711,8 +705,6 @@ def launch_ui(args: argparse.Namespace) -> None:
             row = self.transcription_files.index(path)
             self.list_widget.setCurrentRow(row)
             self.display_file(path)
-            if self.current_segments:
-                self.rename_button.setEnabled(True)
             self.update_clean_button_state()
 
         def delete_transcript(self, path: Path) -> None:
@@ -741,13 +733,17 @@ def launch_ui(args: argparse.Namespace) -> None:
                 self.status_label.setText("Ready")
                 self.current_segments = []
                 self.speaker_names = {}
-                self.rename_button.setEnabled(False)
 
             self.refresh_file_list()
             self.update_clean_button_state()
 
         def rename_speakers(self) -> None:
             if not self.current_segments or not self.speaker_names:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "No Speakers",
+                    "There are no diarized speakers available to rename yet.",
+                )
                 return
 
             dialog = QtWidgets.QDialog(self)
@@ -857,7 +853,6 @@ def launch_ui(args: argparse.Namespace) -> None:
 
             self.current_segments = []
             self.speaker_names = {}
-            self.rename_button.setEnabled(False)
             self.update_clean_button_state()
 
         def update_clean_button_state(self) -> None:
