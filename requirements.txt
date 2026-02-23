@@ -6,3 +6,5 @@ PySide6
 pyannote.audio
 python-dotenv
 openai
+anthropic
+pytest

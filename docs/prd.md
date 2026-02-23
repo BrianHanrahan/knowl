@@ -37,7 +37,8 @@ The user always sees which context files are active in any given interaction. Co
 - Replacing Claude Code or other AI coding assistants directly.
 - Building a general-purpose note-taking app (context files are specifically for AI interaction).
 - Real-time collaborative editing of context files.
-- Hosting or running LLMs locally (Knowl manages context and sends it to provider APIs — but users choose the provider).
+- Hosting or running LLMs locally (Knowl manages context and sends it to the Claude API).
+- Supporting multiple LLM providers (Claude-only for now; other providers can be added later).
 - Mobile app (desktop/web first).
 
 ## 5. User Personas & Stories
@@ -125,11 +126,15 @@ The user always sees which context files are active in any given interaction. Co
 
 ## 7. Key Features
 
-### 7.1 Voice Capture
+### 7.1 Voice Capture & Intent Routing
 - Press-and-hold or toggle to record voice input.
 - Transcription via local Whisper (reuses existing transcription infrastructure).
-- Voice input can be routed to: (a) AI conversation, (b) context capture (add to a context file), or (c) commands (switch project, promote context, etc.).
-- Intent detection determines where voice input goes, with explicit mode switching available.
+- Voice input is routed based on **explicit mode switching** (not ML classification). Three modes:
+  - **Chat** (default): Transcribed text goes to the Claude conversation.
+  - **Capture**: Transcribed text is appended to the active context file (user selects target, or defaults to a scratchpad).
+  - **Command**: Text is parsed against a fixed command vocabulary (`switch to <project>`, `promote <file>`, `list projects`, `show context`).
+- User switches mode via voice prefix ("note:", "hey knowl:") or UI toggle button.
+- Fallback: if command parsing fails, treat as chat. The active mode is always shown in the UI.
 
 ### 7.2 Context Editor
 - View and edit any context file in a markdown editor.
@@ -154,22 +159,31 @@ The user always sees which context files are active in any given interaction. Co
   - "This preference appears project-specific but matches your global identity — merge?"
 - Promotion creates a copy in global (or merges into existing global file) and optionally removes the project-level version.
 
-### 7.6 AI Conversation (Bring Your Own LLM)
-- Chat interface that sends active context + user message to the user's chosen LLM.
-- **Provider-agnostic**: Users configure their own LLM provider and API key. Supported providers include Claude (Anthropic), OpenAI/GPT, Google Gemini, local models via Ollama/LM Studio, or any OpenAI-compatible API endpoint.
-- Provider configuration lives in `~/.knowl/config.json` with per-project overrides possible.
-- Context is prepended as system/user messages following a structured format adapted to each provider's API conventions.
+### 7.6 Claude Integration
+- Chat interface that sends active context + user message to **Anthropic Claude** via the `anthropic` Python SDK.
+- Configuration in `~/.knowl/config.json`: model name (default: `claude-sonnet-4-6`) and `ANTHROPIC_API_KEY` environment variable.
+- Context files are concatenated into the system prompt with section headers (e.g., "## Global: identity.md", "## Project: architecture.md").
 - Conversation history is scoped per project.
 - User can inspect the full prompt (context + message) before sending.
 
+#### Token Budgeting
+- Default budget: 8,000 tokens for context (configurable per project in `context.json`).
+- Token estimation uses a character-based heuristic (~4 chars per token) as a conservative estimate.
+- Loading priority when budget is exceeded: (1) global context (mandatory, always loaded), (2) project files in `active_files` order, (3) skip remaining files with a warning in the Active Context Panel.
+- If a single file exceeds the budget: truncate with a "[truncated — full file: <path>]" marker.
+
+#### Context Conflict Resolution
+- **Project overrides global** on conflict (same precedence model as Claude Code's CLAUDE.md hierarchy).
+- No automatic merging — conflicts are surfaced to the user via the Active Context Panel.
+- The promotion engine flags conflicts during promotion and asks the user to resolve before completing.
+
 ### 7.7 Agent Dispatch (Build Mode)
-- Knowl can dispatch tasks to **coding agents** like Claude Code or OpenAI Codex, passing along the assembled context.
+- Knowl can dispatch tasks to **CLI-based coding agents** like Claude Code, Aider, or Continue.dev, passing along the assembled context.
 - The user describes what they want built (by voice or text), Knowl assembles the relevant context, and hands the task off to the chosen agent.
 - **Supported agents**:
   - **Claude Code**: Launches with assembled context injected via CLAUDE.md files or CLI arguments.
-  - **OpenAI Codex**: Dispatches tasks via the Codex CLI/API with context provided as instructions.
   - **Other agents**: Extensible to future coding agents that accept context + task descriptions.
-- Context files from Knowl are translated into the agent's native format (e.g., CLAUDE.md for Claude Code, system prompts for Codex).
+- Context files from Knowl are translated into the agent's native format (e.g., CLAUDE.md for Claude Code, system prompts for other agents).
 - The user stays in control: they can review what context will be sent before dispatch, and see the agent's output within Knowl.
 - This makes Knowl a **context orchestration layer** — it doesn't replace coding agents, it makes them more effective by giving them the right context every time.
 
@@ -179,9 +193,15 @@ The user always sees which context files are active in any given interaction. Co
 - **Language**: Python 3.10+
 - **Voice**: OpenAI Whisper (local, already in repo)
 - **UI**: PySide6 (desktop) — can evaluate web (Flask/FastAPI + React) later
-- **AI API**: Provider-agnostic — supports Anthropic Claude, OpenAI, Google Gemini, Ollama, LM Studio, and any OpenAI-compatible endpoint. Users bring their own API keys and model preferences.
+- **AI API**: Anthropic Claude via the `anthropic` Python SDK. Users provide an `ANTHROPIC_API_KEY` environment variable.
 - **Storage**: Filesystem-based (markdown files + JSON metadata)
 - **Dependencies**: Minimal — avoid heavy frameworks
+
+### Security
+- **API key**: `ANTHROPIC_API_KEY` is read from an environment variable only — never stored in config files or on disk.
+- **Path validation**: All store operations validate that paths resolve within `~/.knowl/`. Path traversal (`..`) is rejected.
+- **File size limit**: 100KB per context file (configurable). Prevents accidental inclusion of large files.
+- **Prompt injection**: Context files are user-controlled and should only contain trusted content. No automatic inclusion of files from untrusted sources.
 
 ### Context Format
 - Plain markdown for maximum portability and human readability.
@@ -220,9 +240,9 @@ The user always sees which context files are active in any given interaction. Co
 - Build global context management (create, edit, list global files).
 
 ### Phase 2: Context-Aware Conversations
-- Integrate Claude API for AI conversations.
+- Integrate Claude API via `anthropic` SDK for AI conversations.
 - Build active context panel — show what's being sent.
-- Implement context assembly: global + project context → structured prompt.
+- Implement context assembly: global + project context → structured system prompt.
 - Add token estimation and budgeting.
 
 ### Phase 3: Voice Integration
@@ -237,9 +257,8 @@ The user always sees which context files are active in any given interaction. Co
 
 ### Phase 5: Agent Dispatch
 - Implement Claude Code integration: generate CLAUDE.md from active context files and launch tasks.
-- Implement Codex integration: translate context to system prompts and dispatch via Codex CLI/API.
 - Build dispatch UI: review context → choose agent → send task → view results.
-- Add extensibility hooks for future coding agents.
+- Add extensibility hooks for future coding agents (Aider, Continue.dev, etc.).
 
 ### Phase 6: Polish & Extensibility
 - Refine UI/UX based on usage.

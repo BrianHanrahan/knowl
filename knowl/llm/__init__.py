@@ -1,1 +1,1 @@
-# LLM provider abstraction — bring your own model
+# LLM module — Claude integration via Anthropic SDK
