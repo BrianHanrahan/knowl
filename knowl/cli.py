@@ -279,6 +279,242 @@ def cmd_history_clear(args: argparse.Namespace) -> None:
     print(f"Conversation history cleared for {label}.")
 
 
+def _execute_voice_intent(intent: "routing.Intent") -> None:
+    """Execute a classified voice intent (command or capture)."""
+    from knowl.voice import routing  # noqa: F811
+
+    config = store.load_config()
+    project = config.get("active_project")
+
+    if intent.kind == "command":
+        cmd = intent.command
+        cmd_args = intent.args or {}
+
+        if cmd == "switch_project":
+            name = cmd_args.get("name", "")
+            projects = store.list_projects()
+            if name not in projects:
+                print(f"Project '{name}' not found. Available: {', '.join(projects) or 'none'}")
+                return
+            config["active_project"] = name
+            store.save_config(config)
+            print(f"Switched to project: {name}")
+
+        elif cmd == "list_projects":
+            projects = store.list_projects()
+            if not projects:
+                print("No projects yet.")
+                return
+            active = config.get("active_project")
+            for p in projects:
+                marker = " *" if p == active else ""
+                print(f"  {p}{marker}")
+
+        elif cmd == "list_context":
+            _print_context_summary(project)
+
+        elif cmd == "show_status":
+            _print_status()
+
+        elif cmd == "create_project":
+            name = cmd_args.get("name", "")
+            if name:
+                path = store.create_project(name)
+                print(f"Created project: {name} ({path})")
+
+        elif cmd == "promote":
+            file_name = cmd_args.get("file", "")
+            src_project = cmd_args.get("project", project)
+            if not src_project:
+                print("No project specified. Switch to a project first.")
+                return
+            result = store.promote_to_global(src_project, file_name)
+            if result:
+                print(f"Promoted {file_name} from {src_project} to global context.")
+            else:
+                print(f"File not found: {src_project}/{file_name}")
+
+        elif cmd == "clear_history":
+            store.clear_history(project)
+            label = f"project '{project}'" if project else "global"
+            print(f"Conversation history cleared for {label}.")
+
+        elif cmd == "inspect_context":
+            context_pieces = store.assemble_context(project)
+            if not context_pieces:
+                print("No context files found.")
+                return
+            for piece in context_pieces:
+                tokens = store.estimate_tokens(piece.get("content", ""))
+                print(f"  {piece['source']}  (~{tokens} tokens)")
+
+        else:
+            print(f"Unknown command: {cmd}")
+
+    elif intent.kind == "capture":
+        # Append captured text to a scratchpad file in the active project (or global)
+        if project:
+            target = store.PROJECTS_DIR / project / "voice-notes.md"
+            scope_label = f"project/{project}"
+        else:
+            target = store.GLOBAL_DIR / "voice-notes.md"
+            scope_label = "global"
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        existing = ""
+        if target.exists():
+            existing = target.read_text(encoding="utf-8")
+
+        if not existing:
+            existing = "# Voice Notes\n\n"
+
+        entry = f"- {intent.text}\n"
+        store.write_context_file(target, existing + entry)
+        print(f"Captured to {scope_label}/voice-notes.md: {intent.text}")
+
+
+def _print_context_summary(project: str | None) -> None:
+    """Print a summary of active context files."""
+    context_pieces = store.assemble_context(project)
+    if not context_pieces:
+        print("No active context files.")
+        return
+    total = 0
+    for piece in context_pieces:
+        tokens = store.estimate_tokens(piece.get("content", ""))
+        total += tokens
+        print(f"  {piece['source']}  (~{tokens} tokens)")
+    print(f"  Total: ~{total} tokens")
+
+
+def _print_status() -> None:
+    """Print Knowl status summary."""
+    config = store.load_config()
+    active_project = config.get("active_project")
+    print(f"Knowl store: {store.KNOWL_DIR}")
+    print(f"Model: {config.get('llm', {}).get('model', 'claude-sonnet-4-6')}")
+    print(f"Projects: {len(store.list_projects())}")
+    print(f"Active project: {active_project or '(none)'}")
+
+
+def cmd_voice(args: argparse.Namespace) -> None:
+    """Record from microphone, transcribe, and route based on intent."""
+    from knowl.voice import routing
+
+    config = store.load_config()
+    voice_config = config.get("voice", {})
+    whisper_model = voice_config.get("whisper_model", "base")
+    language = voice_config.get("language", "auto")
+    if language == "auto":
+        language = None
+
+    # Check for required libraries
+    try:
+        from knowl.voice.recorder import VoiceRecorder
+        from knowl.voice.transcribe import transcribe_audio
+    except ImportError as exc:
+        print(f"Voice dependencies not available: {exc}")
+        print("Install with: pip install sounddevice soundfile numpy openai-whisper")
+        sys.exit(1)
+
+    project = config.get("active_project")
+    print(f"Voice mode — press Enter to start recording, Enter again to stop.")
+    if project:
+        print(f"Project: {project}")
+    print(f"Whisper model: {whisper_model}")
+    print(f"Say 'note <text>' to capture, or speak a command, or just chat.\n")
+
+    recorder = VoiceRecorder()
+
+    while True:
+        try:
+            input("Press Enter to record (Ctrl+C to exit)...")
+        except (EOFError, KeyboardInterrupt):
+            print("\nExiting voice mode.")
+            break
+
+        print("Recording... (press Enter to stop)")
+        recorder.start()
+
+        try:
+            input()
+        except (EOFError, KeyboardInterrupt):
+            pass
+
+        wav_path = recorder.stop()
+        print("Transcribing...")
+
+        try:
+            result = transcribe_audio(wav_path, model_name=whisper_model, language=language)
+        except Exception as e:
+            print(f"Transcription error: {e}\n")
+            continue
+
+        text = result.get("text", "").strip()
+        if not text:
+            print("(no speech detected)\n")
+            continue
+
+        print(f"Heard: {text}")
+        intent = routing.classify(text)
+
+        if intent.kind == "command":
+            print(f"[command: {intent.command}]")
+            _execute_voice_intent(intent)
+        elif intent.kind == "capture":
+            _execute_voice_intent(intent)
+        else:
+            # Chat — send to Claude
+            print("[chat]")
+            try:
+                claude.get_api_key()
+            except RuntimeError as e:
+                print(f"Cannot send to Claude: {e}\n")
+                continue
+
+            context_pieces = store.assemble_context(project)
+            history = store.load_history(project)
+            model = config.get("llm", {}).get("model", "claude-sonnet-4-6")
+
+            try:
+                response = claude.send_message(
+                    user_message=intent.text,
+                    context=context_pieces,
+                    history=history,
+                    model=model,
+                )
+            except RuntimeError as e:
+                print(f"Error: {e}\n")
+                continue
+
+            history.append({"role": "user", "content": intent.text})
+            history.append({"role": "assistant", "content": response})
+            store.save_history(project, history)
+            print(f"\nclaude> {response}\n")
+
+        print()  # blank line between rounds
+
+
+def cmd_voice_transcribe(args: argparse.Namespace) -> None:
+    """Transcribe text and route it through intent classification."""
+    from knowl.voice import routing
+
+    text = args.text
+    intent = routing.classify(text)
+
+    if intent.kind == "command":
+        print(f"[command: {intent.command}]")
+        _execute_voice_intent(intent)
+    elif intent.kind == "capture":
+        print(f"[capture]")
+        _execute_voice_intent(intent)
+    else:
+        print(f"[chat] {intent.text}")
+        # In text mode, just print the classification — actual sending
+        # happens through `knowl chat`.
+        print("Use 'knowl chat' for interactive conversations.")
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     config = store.load_config()
     active_project = config.get("active_project")
@@ -356,6 +592,13 @@ def main() -> None:
     hclear_p = history_sub.add_parser("clear", help="Clear conversation history")
     hclear_p.add_argument("--project", default=None, help="Project name")
 
+    # voice
+    voice_parser = sub.add_parser("voice", help="Voice input — record, transcribe, and route")
+    voice_sub = voice_parser.add_subparsers(dest="voice_command")
+    voice_sub.add_parser("record", help="Start voice recording loop")
+    vtext_p = voice_sub.add_parser("text", help="Route text through intent classification (for testing)")
+    vtext_p.add_argument("text", help="Text to classify and route")
+
     # status
     sub.add_parser("status", help="Show Knowl status")
 
@@ -394,6 +637,13 @@ def main() -> None:
             cmd_history_clear(args)
         else:
             history_parser.print_help()
+    elif args.command == "voice":
+        if args.voice_command == "record":
+            cmd_voice(args)
+        elif args.voice_command == "text":
+            cmd_voice_transcribe(args)
+        else:
+            voice_parser.print_help()
     elif args.command == "status":
         cmd_status(args)
     else:

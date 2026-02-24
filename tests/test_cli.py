@@ -168,6 +168,59 @@ class TestHistoryClear:
         assert store.load_history("proj") == []
 
 
+class TestVoiceText:
+    """Test 'knowl voice text' — intent routing through the CLI."""
+
+    def test_chat_intent(self):
+        output = run_cli("voice", "text", "Hello world")
+        assert "[chat]" in output
+
+    def test_capture_intent(self):
+        output = run_cli("voice", "text", "note always use UTC timestamps")
+        assert "[capture]" in output
+        assert "Captured to" in output
+        # Should have written to voice-notes.md
+        notes = (store.GLOBAL_DIR / "voice-notes.md").read_text()
+        assert "always use UTC timestamps" in notes
+
+    def test_capture_to_project(self):
+        store.create_project("proj")
+        config = store.load_config()
+        config["active_project"] = "proj"
+        store.save_config(config)
+        output = run_cli("voice", "text", "note project uses GraphQL")
+        assert "project/proj" in output
+        notes = (store.PROJECTS_DIR / "proj" / "voice-notes.md").read_text()
+        assert "project uses GraphQL" in notes
+
+    def test_command_list_projects(self):
+        store.create_project("alpha")
+        store.create_project("beta")
+        output = run_cli("voice", "text", "list projects")
+        assert "[command: list_projects]" in output
+        assert "alpha" in output
+        assert "beta" in output
+
+    def test_command_switch_project(self):
+        store.create_project("my-app")
+        output = run_cli("voice", "text", "switch to my-app")
+        assert "[command: switch_project]" in output
+        assert "Switched to project: my-app" in output
+        config = store.load_config()
+        assert config["active_project"] == "my-app"
+
+    def test_command_create_project(self):
+        output = run_cli("voice", "text", "create project new-thing")
+        assert "[command: create_project]" in output
+        assert "Created project: new-thing" in output
+        assert "new-thing" in store.list_projects()
+
+    def test_command_status(self):
+        output = run_cli("voice", "text", "show status")
+        assert "[command: show_status]" in output
+        assert "Knowl store" in output
+
+
 class TestStatus:
     def test_status(self):
         output = run_cli("status")
