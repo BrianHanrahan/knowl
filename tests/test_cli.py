@@ -221,6 +221,71 @@ class TestVoiceText:
         assert "Knowl store" in output
 
 
+class TestPromoteSuggest:
+    def test_no_suggestions(self):
+        output = run_cli("promote", "suggest")
+        assert "No promotion suggestions" in output
+
+    def test_with_suggestions(self):
+        content = "- Use TypeScript\n- Use ESLint\n- Prefer const\n"
+        store.create_project("alpha")
+        store.create_project("beta")
+        (store.PROJECTS_DIR / "alpha" / "style.md").write_text(content)
+        (store.PROJECTS_DIR / "beta" / "style.md").write_text(content)
+        output = run_cli("promote", "suggest")
+        assert "style.md" in output
+        assert "100%" in output
+        assert "alpha" in output
+        assert "beta" in output
+
+
+class TestPromoteApply:
+    def test_apply_promotion(self):
+        content = "- Use TypeScript\n- Use ESLint\n"
+        store.create_project("alpha")
+        store.create_project("beta")
+        (store.PROJECTS_DIR / "alpha" / "style.md").write_text(content)
+        (store.PROJECTS_DIR / "beta" / "style.md").write_text(content)
+        output = run_cli("promote", "apply", "style.md")
+        assert "Promoted" in output
+        assert (store.GLOBAL_DIR / "style.md").exists()
+
+    def test_apply_no_suggestions(self):
+        output = run_cli("promote", "apply", "nope.md")
+        assert "No promotion suggestions" in output or "No suggestion found" in output
+
+    def test_apply_conflict_without_force(self):
+        content = "- Use TypeScript\n"
+        store.create_project("alpha")
+        store.create_project("beta")
+        (store.PROJECTS_DIR / "alpha" / "style.md").write_text(content)
+        (store.PROJECTS_DIR / "beta" / "style.md").write_text(content)
+        (store.GLOBAL_DIR / "style.md").write_text("# Old")
+        output = run_cli("promote", "apply", "style.md")
+        assert "already exists" in output or "force" in output.lower()
+
+    def test_apply_conflict_with_force(self):
+        content = "- Use TypeScript\n"
+        store.create_project("alpha")
+        store.create_project("beta")
+        (store.PROJECTS_DIR / "alpha" / "style.md").write_text(content)
+        (store.PROJECTS_DIR / "beta" / "style.md").write_text(content)
+        (store.GLOBAL_DIR / "style.md").write_text("# Old")
+        output = run_cli("promote", "apply", "style.md", "--force")
+        assert "Promoted" in output
+
+    def test_apply_with_cleanup(self):
+        content = "- Use TypeScript\n"
+        store.create_project("alpha")
+        store.create_project("beta")
+        (store.PROJECTS_DIR / "alpha" / "style.md").write_text(content)
+        (store.PROJECTS_DIR / "beta" / "style.md").write_text(content)
+        output = run_cli("promote", "apply", "style.md", "--cleanup")
+        assert "Promoted" in output
+        assert not (store.PROJECTS_DIR / "alpha" / "style.md").exists()
+        assert not (store.PROJECTS_DIR / "beta" / "style.md").exists()
+
+
 class TestStatus:
     def test_status(self):
         output = run_cli("status")

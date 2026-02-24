@@ -515,6 +515,62 @@ def cmd_voice_transcribe(args: argparse.Namespace) -> None:
         print("Use 'knowl chat' for interactive conversations.")
 
 
+def cmd_promote_suggest(args: argparse.Namespace) -> None:
+    """Scan projects for promotion candidates."""
+    from knowl.context.promotion import scan_for_promotions
+
+    threshold = args.threshold if hasattr(args, "threshold") and args.threshold else 0.3
+    suggestions = scan_for_promotions(similarity_threshold=threshold)
+
+    if not suggestions:
+        print("No promotion suggestions. Add similar context to multiple projects to see suggestions.")
+        return
+
+    print(f"Found {len(suggestions)} promotion suggestion(s):\n")
+    for i, s in enumerate(suggestions, 1):
+        conflict_marker = " [CONFLICT]" if s.conflict else ""
+        print(f"  {i}. {s.filename} — {s.similarity:.0%} similar across {len(s.projects)} projects{conflict_marker}")
+        print(f"     Projects: {', '.join(s.projects)}")
+        print(f"     {s.reason}")
+        print()
+
+
+def cmd_promote_apply(args: argparse.Namespace) -> None:
+    """Apply a specific promotion — copy from a project to global."""
+    from knowl.context.promotion import scan_for_promotions, apply_promotion
+
+    suggestions = scan_for_promotions()
+    if not suggestions:
+        print("No promotion suggestions available.")
+        return
+
+    # Find the matching suggestion
+    target = args.file
+    matching = [s for s in suggestions if s.filename == target]
+    if not matching:
+        print(f"No suggestion found for '{target}'. Run 'knowl promote suggest' to see options.")
+        return
+
+    suggestion = matching[0]
+
+    if suggestion.conflict and not args.force:
+        print(f"'{target}' already exists in global context. Use --force to overwrite.")
+        return
+
+    source = args.source or suggestion.projects[0]
+    if source not in suggestion.projects:
+        print(f"Project '{source}' not in suggestion sources: {', '.join(suggestion.projects)}")
+        return
+
+    result = apply_promotion(suggestion, source_project=source, remove_from_projects=args.cleanup)
+    if result:
+        print(f"Promoted '{target}' from '{source}' to global context.")
+        if args.cleanup:
+            print(f"Removed '{target}' from: {', '.join(suggestion.projects)}")
+    else:
+        print(f"Failed to promote '{target}'.")
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     config = store.load_config()
     active_project = config.get("active_project")
@@ -599,6 +655,17 @@ def main() -> None:
     vtext_p = voice_sub.add_parser("text", help="Route text through intent classification (for testing)")
     vtext_p.add_argument("text", help="Text to classify and route")
 
+    # promote
+    promote_parser = sub.add_parser("promote", help="Smart promotion — suggest and apply cross-project promotions")
+    promote_sub = promote_parser.add_subparsers(dest="promote_command")
+    psuggest_p = promote_sub.add_parser("suggest", help="Scan for promotion candidates")
+    psuggest_p.add_argument("--threshold", type=float, default=0.3, help="Similarity threshold (0.0-1.0)")
+    papply_p = promote_sub.add_parser("apply", help="Apply a promotion suggestion")
+    papply_p.add_argument("file", help="Filename to promote")
+    papply_p.add_argument("--source", default=None, help="Source project (defaults to first match)")
+    papply_p.add_argument("--force", action="store_true", help="Overwrite existing global file")
+    papply_p.add_argument("--cleanup", action="store_true", help="Remove from source projects after promotion")
+
     # status
     sub.add_parser("status", help="Show Knowl status")
 
@@ -637,6 +704,13 @@ def main() -> None:
             cmd_history_clear(args)
         else:
             history_parser.print_help()
+    elif args.command == "promote":
+        if args.promote_command == "suggest":
+            cmd_promote_suggest(args)
+        elif args.promote_command == "apply":
+            cmd_promote_apply(args)
+        else:
+            promote_parser.print_help()
     elif args.command == "voice":
         if args.voice_command == "record":
             cmd_voice(args)
