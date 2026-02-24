@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 from knowl.context import store
+from knowl.llm import claude
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -163,6 +164,121 @@ def cmd_context_promote(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_context_inspect(args: argparse.Namespace) -> None:
+    """Show the exact system prompt that would be sent to Claude."""
+    config = store.load_config()
+    project = args.project if hasattr(args, "project") and args.project else config.get("active_project")
+    budget = args.budget if hasattr(args, "budget") and args.budget else 8000
+
+    context_pieces = store.assemble_context(project, token_budget=budget)
+    system_prompt = claude.format_system_prompt(context_pieces)
+
+    if not context_pieces:
+        print("No context files found. Add some with: knowl context add <file>")
+        return
+
+    print(f"--- Active Context ({len(context_pieces)} files) ---\n")
+    total_tokens = 0
+    for piece in context_pieces:
+        tokens = store.estimate_tokens(piece.get("content", ""))
+        total_tokens += tokens
+        print(f"  {piece['source']}  (~{tokens} tokens)")
+    print(f"\n  Total: ~{total_tokens} tokens (budget: {budget})")
+
+    print(f"\n--- System Prompt Preview ---\n")
+    print(system_prompt)
+    print(f"\n--- End Preview ---")
+
+
+def cmd_chat(args: argparse.Namespace) -> None:
+    """Interactive chat with Claude using assembled context."""
+    config = store.load_config()
+    project = config.get("active_project")
+    model = config.get("llm", {}).get("model", "claude-sonnet-4-6")
+
+    # Verify API key early
+    try:
+        claude.get_api_key()
+    except RuntimeError as e:
+        print(str(e))
+        sys.exit(1)
+
+    # Assemble context
+    context_pieces = store.assemble_context(project)
+    total_tokens = sum(store.estimate_tokens(p.get("content", "")) for p in context_pieces)
+
+    # Load existing history
+    history = store.load_history(project)
+
+    # Show header
+    print(f"Knowl Chat — Model: {model}")
+    if project:
+        print(f"Project: {project}")
+    print(f"Context: {len(context_pieces)} files (~{total_tokens} tokens)")
+    if history:
+        print(f"History: {len(history) // 2} previous exchanges (use /clear to reset)")
+    print(f"Type /quit to exit, /clear to reset history, /context to inspect active context.\n")
+
+    while True:
+        try:
+            user_input = input("you> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nGoodbye.")
+            break
+
+        if not user_input:
+            continue
+
+        # Handle slash commands
+        if user_input == "/quit" or user_input == "/exit":
+            print("Goodbye.")
+            break
+        elif user_input == "/clear":
+            history = []
+            store.clear_history(project)
+            print("History cleared.\n")
+            continue
+        elif user_input == "/context":
+            if not context_pieces:
+                print("No active context files.\n")
+            else:
+                for piece in context_pieces:
+                    tokens = store.estimate_tokens(piece.get("content", ""))
+                    print(f"  {piece['source']}  (~{tokens} tokens)")
+                print(f"  Total: ~{total_tokens} tokens\n")
+            continue
+        elif user_input.startswith("/"):
+            print(f"Unknown command: {user_input}. Available: /quit, /clear, /context\n")
+            continue
+
+        # Send to Claude
+        try:
+            response = claude.send_message(
+                user_message=user_input,
+                context=context_pieces,
+                history=history,
+                model=model,
+            )
+        except RuntimeError as e:
+            print(f"\nError: {e}\n")
+            continue
+
+        # Update history
+        history.append({"role": "user", "content": user_input})
+        history.append({"role": "assistant", "content": response})
+        store.save_history(project, history)
+
+        print(f"\nclaude> {response}\n")
+
+
+def cmd_history_clear(args: argparse.Namespace) -> None:
+    config = store.load_config()
+    project = args.project if hasattr(args, "project") and args.project else config.get("active_project")
+    store.clear_history(project)
+    label = f"project '{project}'" if project else "global"
+    print(f"Conversation history cleared for {label}.")
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     config = store.load_config()
     active_project = config.get("active_project")
@@ -227,6 +343,19 @@ def main() -> None:
     prom_p.add_argument("file", help="Filename to promote")
     prom_p.add_argument("--from", dest="project", default=None, help="Source project")
 
+    inspect_p = context_sub.add_parser("inspect", help="Preview the system prompt that would be sent to Claude")
+    inspect_p.add_argument("--project", default=None, help="Project name")
+    inspect_p.add_argument("--budget", type=int, default=8000, help="Token budget")
+
+    # chat
+    sub.add_parser("chat", help="Start an interactive chat with Claude using active context")
+
+    # history
+    history_parser = sub.add_parser("history", help="Manage conversation history")
+    history_sub = history_parser.add_subparsers(dest="history_command")
+    hclear_p = history_sub.add_parser("clear", help="Clear conversation history")
+    hclear_p.add_argument("--project", default=None, help="Project name")
+
     # status
     sub.add_parser("status", help="Show Knowl status")
 
@@ -254,8 +383,17 @@ def main() -> None:
             cmd_context_delete(args)
         elif args.context_command == "promote":
             cmd_context_promote(args)
+        elif args.context_command == "inspect":
+            cmd_context_inspect(args)
         else:
             context_parser.print_help()
+    elif args.command == "chat":
+        cmd_chat(args)
+    elif args.command == "history":
+        if args.history_command == "clear":
+            cmd_history_clear(args)
+        else:
+            history_parser.print_help()
     elif args.command == "status":
         cmd_status(args)
     else:

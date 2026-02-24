@@ -473,3 +473,47 @@ def update_index_entry(scope: str, project: str | None, filename: str) -> None:
         INDEX_PATH.write_text(json.dumps(index, indent=2), encoding="utf-8")
     except OSError as exc:
         logger.warning("Failed to update index: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Conversation history
+# ---------------------------------------------------------------------------
+
+def _history_path(project_name: str | None) -> Path:
+    """Return the path for a conversation history file."""
+    if project_name:
+        return PROJECTS_DIR / project_name / "history.json"
+    return KNOWL_DIR / "global_history.json"
+
+
+def load_history(project_name: str | None) -> list[dict[str, str]]:
+    """Load conversation history for a project (or global if None)."""
+    path = _history_path(project_name)
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return data
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Failed to read history: %s", exc)
+    return []
+
+
+def save_history(project_name: str | None, history: list[dict[str, str]]) -> None:
+    """Save conversation history for a project (or global if None)."""
+    path = _history_path(project_name)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+    except OSError as exc:
+        logger.error("Failed to save history: %s", exc)
+
+
+def clear_history(project_name: str | None) -> None:
+    """Clear conversation history for a project (or global if None)."""
+    path = _history_path(project_name)
+    if path.exists():
+        try:
+            path.unlink()
+        except OSError as exc:
+            logger.error("Failed to clear history: %s", exc)

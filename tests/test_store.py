@@ -261,3 +261,41 @@ class TestIndex:
         store.update_index_entry("global", None, "test.md")
         index = json.loads(store.INDEX_PATH.read_text())
         assert any(e["file"] == "test.md" for e in index["global"])
+
+
+class TestConversationHistory:
+    def test_save_and_load_project_history(self):
+        store.init_store()
+        store.create_project("proj")
+        history = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there!"},
+        ]
+        store.save_history("proj", history)
+        loaded = store.load_history("proj")
+        assert len(loaded) == 2
+        assert loaded[0]["content"] == "Hello"
+        assert loaded[1]["content"] == "Hi there!"
+
+    def test_save_and_load_global_history(self):
+        store.init_store()
+        history = [{"role": "user", "content": "Test"}]
+        store.save_history(None, history)
+        loaded = store.load_history(None)
+        assert len(loaded) == 1
+
+    def test_load_empty_history(self):
+        store.init_store()
+        assert store.load_history("nonexistent") == []
+
+    def test_clear_history(self):
+        store.init_store()
+        store.create_project("proj")
+        store.save_history("proj", [{"role": "user", "content": "Hi"}])
+        store.clear_history("proj")
+        assert store.load_history("proj") == []
+
+    def test_clear_nonexistent_history(self):
+        store.init_store()
+        # Should not raise
+        store.clear_history("nonexistent")
