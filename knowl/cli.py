@@ -571,6 +571,84 @@ def cmd_promote_apply(args: argparse.Namespace) -> None:
         print(f"Failed to promote '{target}'.")
 
 
+def cmd_export(args: argparse.Namespace) -> None:
+    """Export assembled context as CLAUDE.md."""
+    from knowl.agents.dispatch import generate_claude_md, write_claude_md
+
+    config = store.load_config()
+    project = args.project if hasattr(args, "project") and args.project else config.get("active_project")
+    budget = args.budget if hasattr(args, "budget") and args.budget else 8000
+
+    if args.stdout:
+        content = generate_claude_md(project, token_budget=budget)
+        if not content:
+            print("No context to export.")
+            return
+        print(content)
+    else:
+        target_dir = Path(args.dir) if hasattr(args, "dir") and args.dir else Path.cwd()
+        if not target_dir.is_dir():
+            print(f"Directory not found: {target_dir}")
+            sys.exit(1)
+        path = write_claude_md(target_dir, project, token_budget=budget)
+        print(f"Exported context to {path}")
+
+
+def cmd_dispatch(args: argparse.Namespace) -> None:
+    """Dispatch a task to a coding agent with Knowl context."""
+    from knowl.agents.dispatch import dispatch, list_agents
+
+    config = store.load_config()
+    project = config.get("active_project")
+    agent_key = args.agent if hasattr(args, "agent") and args.agent else "claude-code"
+    task = args.task
+    dry_run = args.dry_run if hasattr(args, "dry_run") else False
+    working_dir = Path(args.dir) if hasattr(args, "dir") and args.dir else None
+
+    # Show context preview
+    context_pieces = store.assemble_context(project)
+    total_tokens = sum(store.estimate_tokens(p.get("content", "")) for p in context_pieces)
+
+    print(f"Agent: {agent_key}")
+    print(f"Task: {task}")
+    if project:
+        print(f"Project: {project}")
+    print(f"Context: {len(context_pieces)} files (~{total_tokens} tokens)")
+
+    if dry_run:
+        print("\n[DRY RUN]")
+
+    result = dispatch(
+        agent_key=agent_key,
+        task=task,
+        working_dir=working_dir,
+        project_name=project,
+        dry_run=dry_run,
+    )
+
+    if result.context_file:
+        print(f"Context file: {result.context_file}")
+
+    print()
+    if result.success:
+        if result.output:
+            print(result.output)
+    else:
+        print(f"Error: {result.error}")
+        sys.exit(1)
+
+
+def cmd_agents_list(args: argparse.Namespace) -> None:
+    """List available agents."""
+    from knowl.agents.dispatch import list_agents
+
+    agents = list_agents()
+    print("Available agents:\n")
+    for a in agents:
+        status = "installed" if a["available"] else "not found"
+        print(f"  {a['key']:15s} {a['name']:15s} ({a['command']}) [{status}]")
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     config = store.load_config()
     active_project = config.get("active_project")
@@ -666,6 +744,25 @@ def main() -> None:
     papply_p.add_argument("--force", action="store_true", help="Overwrite existing global file")
     papply_p.add_argument("--cleanup", action="store_true", help="Remove from source projects after promotion")
 
+    # export
+    export_p = sub.add_parser("export", help="Export context as CLAUDE.md")
+    export_p.add_argument("--project", default=None, help="Project name")
+    export_p.add_argument("--budget", type=int, default=8000, help="Token budget")
+    export_p.add_argument("--stdout", action="store_true", help="Print to stdout instead of writing file")
+    export_p.add_argument("--dir", default=None, help="Target directory (defaults to cwd)")
+
+    # dispatch
+    dispatch_p = sub.add_parser("dispatch", help="Dispatch a task to a coding agent with Knowl context")
+    dispatch_p.add_argument("task", help="Task description to send to the agent")
+    dispatch_p.add_argument("--agent", default="claude-code", help="Agent to use (default: claude-code)")
+    dispatch_p.add_argument("--dir", default=None, help="Working directory for the agent")
+    dispatch_p.add_argument("--dry-run", action="store_true", help="Show what would be run without executing")
+
+    # agents
+    agents_parser = sub.add_parser("agents", help="Manage coding agents")
+    agents_sub = agents_parser.add_subparsers(dest="agents_command")
+    agents_sub.add_parser("list", help="List available agents")
+
     # status
     sub.add_parser("status", help="Show Knowl status")
 
@@ -718,6 +815,15 @@ def main() -> None:
             cmd_voice_transcribe(args)
         else:
             voice_parser.print_help()
+    elif args.command == "export":
+        cmd_export(args)
+    elif args.command == "dispatch":
+        cmd_dispatch(args)
+    elif args.command == "agents":
+        if args.agents_command == "list":
+            cmd_agents_list(args)
+        else:
+            agents_parser.print_help()
     elif args.command == "status":
         cmd_status(args)
     else:
