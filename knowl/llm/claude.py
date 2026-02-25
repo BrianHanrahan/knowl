@@ -94,3 +94,43 @@ def send_message(
         raise RuntimeError(f"Authentication failed — check your ANTHROPIC_API_KEY: {exc}") from exc
     except anthropic.APIError as exc:
         raise RuntimeError(f"Claude API error: {exc}") from exc
+
+
+def stream_message(
+    user_message: str,
+    context: list[dict[str, str]] | None = None,
+    history: list[dict[str, str]] | None = None,
+    model: str = "claude-sonnet-4-6",
+    max_tokens: int = 4096,
+):
+    """Stream a message response from Claude, yielding text chunks.
+
+    Same interface as send_message but yields str chunks instead of
+    returning a single string.
+    """
+    import anthropic
+
+    client = get_client()
+    system_prompt = format_system_prompt(context or [])
+
+    messages: list[dict[str, str]] = []
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": user_message})
+
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": messages,
+    }
+    if system_prompt:
+        kwargs["system"] = system_prompt
+
+    try:
+        with client.messages.stream(**kwargs) as stream:
+            for text in stream.text_stream:
+                yield text
+    except anthropic.AuthenticationError as exc:
+        raise RuntimeError(f"Authentication failed — check your ANTHROPIC_API_KEY: {exc}") from exc
+    except anthropic.APIError as exc:
+        raise RuntimeError(f"Claude API error: {exc}") from exc

@@ -649,6 +649,28 @@ def cmd_agents_list(args: argparse.Namespace) -> None:
         print(f"  {a['key']:15s} {a['name']:15s} ({a['command']}) [{status}]")
 
 
+def cmd_serve(args: argparse.Namespace) -> None:
+    """Start the Knowl web UI."""
+    try:
+        import uvicorn
+    except ImportError:
+        print("Web UI dependencies not installed. Run: pip install fastapi uvicorn[standard]")
+        sys.exit(1)
+
+    from knowl.ui.server import create_app
+
+    dev = args.dev if hasattr(args, "dev") else False
+    app = create_app(dev=dev)
+
+    host = args.host if hasattr(args, "host") else "127.0.0.1"
+    port = args.port if hasattr(args, "port") else 8000
+
+    print(f"Knowl Web UI — http://{host}:{port}")
+    if dev:
+        print("Dev mode: CORS enabled for http://localhost:5173")
+    uvicorn.run(app, host=host, port=port)
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     config = store.load_config()
     active_project = config.get("active_project")
@@ -763,6 +785,12 @@ def main() -> None:
     agents_sub = agents_parser.add_subparsers(dest="agents_command")
     agents_sub.add_parser("list", help="List available agents")
 
+    # serve
+    serve_p = sub.add_parser("serve", help="Start the Knowl web UI")
+    serve_p.add_argument("--host", default="127.0.0.1", help="Host to bind to")
+    serve_p.add_argument("--port", type=int, default=8000, help="Port to listen on")
+    serve_p.add_argument("--dev", action="store_true", help="Enable dev mode (CORS for Vite)")
+
     # status
     sub.add_parser("status", help="Show Knowl status")
 
@@ -824,6 +852,8 @@ def main() -> None:
             cmd_agents_list(args)
         else:
             agents_parser.print_help()
+    elif args.command == "serve":
+        cmd_serve(args)
     elif args.command == "status":
         cmd_status(args)
     else:
