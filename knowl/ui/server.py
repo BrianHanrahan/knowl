@@ -1,10 +1,8 @@
 """Knowl Web UI — FastAPI backend serving REST API + React frontend."""
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +12,43 @@ from pydantic import BaseModel
 
 from knowl.context import store
 from knowl.llm import claude
+
+
+# ── Pydantic request models (must be at module level for FastAPI) ────
+
+class CreateProject(BaseModel):
+    name: str
+
+class UpdateConfig(BaseModel):
+    active_project: Optional[str] = None
+    model: Optional[str] = None
+
+class WriteFile(BaseModel):
+    path: str
+    content: str
+
+class CreateFile(BaseModel):
+    filename: str
+    scope: str  # "global" or project name
+    content: str = ""
+
+class SetActiveFiles(BaseModel):
+    files: list[str]
+
+class PromoteFile(BaseModel):
+    project: str
+    filename: str
+
+class ChatMessage(BaseModel):
+    message: str
+    project: Optional[str] = None
+    model: Optional[str] = None
+
+class ApplyPromotion(BaseModel):
+    filename: str
+    source_project: Optional[str] = None
+    force: bool = False
+    cleanup: bool = False
 
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 
@@ -74,9 +109,6 @@ def _register_project_routes(app: FastAPI) -> None:
         active = config.get("active_project")
         return {"projects": projects, "active_project": active}
 
-    class CreateProject(BaseModel):
-        name: str
-
     @app.post("/api/projects")
     async def create_project(body: CreateProject):
         path = store.create_project(body.name)
@@ -97,10 +129,6 @@ def _register_config_routes(app: FastAPI) -> None:
     @app.get("/api/config")
     async def get_config():
         return store.load_config()
-
-    class UpdateConfig(BaseModel):
-        active_project: str | None = None
-        model: str | None = None
 
     @app.put("/api/config")
     async def update_config(body: UpdateConfig):
@@ -149,10 +177,6 @@ def _register_context_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=404, detail="File not found")
         return {"path": path, "content": content}
 
-    class WriteFile(BaseModel):
-        path: str
-        content: str
-
     @app.put("/api/context/file")
     async def write_file(body: WriteFile):
         try:
@@ -160,11 +184,6 @@ def _register_context_routes(app: FastAPI) -> None:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return {"path": body.path, "tokens": store.estimate_tokens(body.content)}
-
-    class CreateFile(BaseModel):
-        filename: str
-        scope: str  # "global" or project name
-        content: str = ""
 
     @app.post("/api/context/file")
     async def create_file(body: CreateFile):
@@ -188,17 +207,10 @@ def _register_context_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=404, detail="File not found")
         return {"deleted": path}
 
-    class SetActiveFiles(BaseModel):
-        files: list[str]
-
     @app.put("/api/context/active/{project}")
     async def set_active_files(project: str, body: SetActiveFiles):
         store.set_active_files(project, body.files)
         return {"project": project, "active_files": body.files}
-
-    class PromoteFile(BaseModel):
-        project: str
-        filename: str
 
     @app.post("/api/context/promote")
     async def promote_file(body: PromoteFile):
@@ -214,7 +226,7 @@ def _register_inspect_routes(app: FastAPI) -> None:
 
     @app.get("/api/inspect")
     async def inspect_context(
-        project: str | None = Query(None),
+        project: Optional[str] = Query(None),
         budget: int = Query(8000),
     ):
         if project is None:
@@ -245,7 +257,7 @@ def _register_inspect_routes(app: FastAPI) -> None:
 def _register_chat_routes(app: FastAPI) -> None:
 
     @app.get("/api/history")
-    async def get_history(project: str | None = Query(None)):
+    async def get_history(project: Optional[str] = Query(None)):
         if project is None:
             config = store.load_config()
             project = config.get("active_project")
@@ -253,17 +265,12 @@ def _register_chat_routes(app: FastAPI) -> None:
         return {"project": project, "history": history}
 
     @app.delete("/api/history")
-    async def clear_history(project: str | None = Query(None)):
+    async def clear_history(project: Optional[str] = Query(None)):
         if project is None:
             config = store.load_config()
             project = config.get("active_project")
         store.clear_history(project)
         return {"cleared": True, "project": project}
-
-    class ChatMessage(BaseModel):
-        message: str
-        project: str | None = None
-        model: str | None = None
 
     @app.post("/api/chat")
     async def chat(body: ChatMessage):
@@ -317,12 +324,6 @@ def _register_promotion_routes(app: FastAPI) -> None:
             }
             for s in suggestions
         ]
-
-    class ApplyPromotion(BaseModel):
-        filename: str
-        source_project: str | None = None
-        force: bool = False
-        cleanup: bool = False
 
     @app.post("/api/promotions/apply")
     async def apply_promotion(body: ApplyPromotion):
