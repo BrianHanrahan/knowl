@@ -1,0 +1,58 @@
+[
+  {
+    "role": "user",
+    "content": "still working?"
+  },
+  {
+    "role": "assistant",
+    "content": "Yes, still here and working! What can I help you with? \ud83d\ude80"
+  },
+  {
+    "role": "user",
+    "content": "enrich the todo.md file with contact info and instructions please"
+  },
+  {
+    "role": "assistant",
+    "content": "Done! Here's what was added to `todo.md`:\n\n- **Contact / Instructions column** on every table \u2014 each item now has a specific person, phone number, and action step\n- **Instructions** for DIY items (battery, horn, bilge pumps, flares, ground tackle) with sizing/spec guidance\n- **Garmin radar** note tied to your existing chartplotter (GPSMAP 1643xsv) for compatibility context\n- **Key Contacts section** at the bottom as a quick-reference summary of all the important numbers (Coastal Marine, WorldCat HQ, Adam at storage, Dave Burke, Shawn Curtis, Mike in Fort Myers)"
+  },
+  {
+    "role": "user",
+    "content": "Remember this in context:\nAll the must, should items are being done at: **New England Auto & Boat Storage**\n\n- Contact: Adam \u2014 [adam@neautoandboatstorage.com](mailto:adam@neautoandboatstorage.com)\n- Phone: (978) 806-2969\n- Address: 10 Industrial Way, Amesbury, MA 01913\n- [Website](https://www.newenglandautoboatstorage.com/contact/)"
+  },
+  {
+    "role": "assistant",
+    "content": "Done! Here's what changed:\n\n- **Added a callout at the top** clearly stating all Must and Should work is at NE Auto & Boat Storage / Adam\n- **Updated every Must and Should item** \u2014 replaced Coastal Marine Center references with **Adam @ NE Auto & Boat Storage \u2014 (978) 806-2969**\n- **Promoted Adam to the top of the Key Contacts table** as \"Primary Work (MA)\"\n- Coastal Marine Center stays in contacts as a reference, but is no longer the primary point of contact for work items"
+  },
+  {
+    "role": "user",
+    "content": "did you do the prostich updates?"
+  },
+  {
+    "role": "assistant",
+    "content": "Good news \u2014 the file **already has all the updates**! The todo.md is fully up to date with:\n\n- \u2705 The callout at the top noting all Must/Should work is at NE Auto & Boat Storage\n- \u2705 Adam's contact info on every Must and Should item\n- \u2705 Adam listed as \"Primary Work (MA)\" at the top of the Key Contacts table\n\nEverything looks correct. Were you expecting something specific that's missing, or did you just want to confirm it was saved properly?"
+  },
+  {
+    "role": "user",
+    "content": "all the canvas items in should are being done by prostich - please update those rows with their contact info"
+  },
+  {
+    "role": "assistant",
+    "content": "Do you have Prostich's contact info handy? I want to make sure I save the right details \u2014 phone, email, website, or address?"
+  },
+  {
+    "role": "user",
+    "content": "use your browser"
+  },
+  {
+    "role": "assistant",
+    "content": "Done! Here's what changed:\n\n- **All 4 canvas rows** now point to **Pro Stitch Marine Upholstery \u2014 (978) 834-2974 | 10 Industrial Way, Amesbury, MA 01913**\n- **Pro Stitch added to Key Contacts** under \"Canvas & Upholstery\"\n\nInteresting coincidence \u2014 they're at the same address as your storage facility (10 Industrial Way), so it's a very convenient one-stop shop!"
+  },
+  {
+    "role": "user",
+    "content": "update project.md with this info:\nRefrigerator \u2014 Vitrifrigo drinks-series fridge (link to their boating refrigerators page)\nhardtop lights \u2014 i2Systems ApeironSDi TRI-LIGHT, three-color LED fixture (SN 38802)\nStarboard nav light (green) \u2014 Attwood NV2012SSG-7 (World Cat #W7013318); also has the port (red) reference: Attwood NV2012SSR-7 (World Cat #W7013317)"
+  },
+  {
+    "role": "assistant",
+    "content": "Done! Here's what was added to project.md:\n\n- **New Equipment section** with a clean table containing:\n  - **Refrigerator** \u2014 Vitrifrigo Drinks Series with link to their boating refrigerators page\n  - **Hardtop Lights** \u2014 i2Systems Apeiron SDi TRI-LIGHT, S/N 38802\n  - **Starboard Nav Light (green)** \u2014 Attwood NV2012SSG-7, World Cat #W7013318\n  - **Port Nav Light (red)** \u2014 Attwood NV2012SSR-7, World Cat #W7013317"
+  }
+]

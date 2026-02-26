@@ -6,3 +6,9 @@ PySide6
 pyannote.audio
 python-dotenv
 openai
+anthropic
+fastapi
+uvicorn[standard]
+pytest
+playwright
+ddgs

@@ -1,3 +1,8 @@
+"""Standalone transcriber application (CLI + GUI).
+
+This module is the original transcriber app, now importing core functions
+from knowl.voice.transcribe. Run it directly or via --ui for the GUI.
+"""
 import argparse
 import functools
 import json
@@ -13,11 +18,15 @@ from typing import Dict, List, Optional
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
-import whisper
 from dotenv import load_dotenv
 
-
-DEFAULT_SAMPLE_RATE = 16_000
+from knowl.voice.transcribe import (
+    DEFAULT_SAMPLE_RATE,
+    list_audio_devices,
+    load_whisper_model,
+    record_audio,
+    save_wav,
+)
 TRANSCRIPT_DIR = Path.home() / "Documents" / "transcriptions"
 DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -67,51 +76,9 @@ LANGUAGE_CHOICES: List[tuple[Optional[str], str]] = [
 ]
 
 
-def list_audio_devices() -> None:
-    """Print available audio input devices."""
-    devices = sd.query_devices()
-    for index, device in enumerate(devices):
-        if device.get("max_input_channels", 0) > 0:
-            print(
-                f"{index}: {device['name']} (inputs: {device['max_input_channels']}, "
-                f"default SR: {device['default_samplerate']})"
-            )
-
-
-def record_audio(duration: float, sample_rate: int, channels: int, device: Optional[int]) -> np.ndarray:
-    """Record audio for a fixed duration (CLI usage)."""
-    if duration <= 0:
-        raise ValueError("Duration must be a positive number of seconds.")
-
-    try:
-        sd.check_input_settings(device=device, channels=channels, samplerate=sample_rate)
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"Failed to access input device: {exc}") from exc
-
-    print(f"Recording for {duration} seconds at {sample_rate} Hz...")
-    recording = sd.rec(
-        int(duration * sample_rate),
-        samplerate=sample_rate,
-        channels=channels,
-        dtype="float32",
-        device=device,
-    )
-    sd.wait()
-    print("Recording complete.")
-    return recording
-
-
 def write_wav(audio: np.ndarray, sample_rate: int, path: Path) -> None:
-    """Persist audio samples to WAV, collapsing to mono if necessary."""
-    if audio.ndim > 1 and audio.shape[1] > 1:
-        audio = np.mean(audio, axis=1, keepdims=True)
-    sf.write(file=str(path), data=audio, samplerate=sample_rate)
-
-
-@functools.lru_cache(maxsize=None)
-def load_whisper_model(model_name: str, device: Optional[str]):
-    print(f"Loading Whisper model '{model_name}'...")
-    return whisper.load_model(model_name, device=device)
+    """Backward-compatible wrapper for save_wav with swapped arg order."""
+    save_wav(audio, path, sample_rate)
 
 
 @functools.lru_cache(maxsize=1)

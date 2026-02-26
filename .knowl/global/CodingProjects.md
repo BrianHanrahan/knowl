@@ -1,0 +1,21 @@
+# Coding Projects
+
+- **COAL** - a vertical AI solution focused on sales enablement
+  - `/Users/brianhanrahan/Documents/coal2`
+  - `/Users/brianhanrahan/Documents/coal-poc-1`
+- **knowl** - a better UI to use Claude with context you can see and manage
+  - `/Users/brianhanrahan/Documents/knowl`
+- **nanoclaw**
+  - `/Users/brianhanrahan/Documents/nanoclaw_fork`
+  - Fitness Tracker App
+- **Scuba**
+  - Sherwood Logic dive computer sync
+    - `/Users/brianhanrahan/Documents/BLE-Sherwood-Logic`
+  - Dive Log Whisperer - create dive log entries by voice
+    - `/Users/brianhanrahan/Documents/dive-log-whisperer`
+  - [Padi.com](http://Padi.com) dive log extractor / export
+    - `/Users/brianhanrahan/Documents/Padi_DiveLogExtractor`
+- **AI Workflow Builder**
+  - `/Users/brianhanrahan/Documents/workflow-builder-architecture`
+- **Dynamic Conditional Access**
+  - `/Users/brianhanrahan/Documents/DynamicConditionalAccess`

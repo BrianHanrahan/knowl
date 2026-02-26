@@ -1,0 +1,52 @@
+{
+  "global": [
+    {
+      "file": "AboutBrian.md",
+      "tokens": 125,
+      "summary": "# About Me  - 67 High Rd, Newbury, MA\\   (978) 961-0494 - [brian.hanrahan@gmail.com](mailto:brian.ha"
+    },
+    {
+      "file": "CodingProjects.md",
+      "tokens": 228,
+      "summary": "# Coding Projects  - **COAL** - a vertical AI solution focused on sales enablement   - `/Users/brian"
+    },
+    {
+      "file": "ToDo-Global.md",
+      "tokens": 26,
+      "summary": "# [ToDo-Global.md](http://ToDo-Global.md)  - Townsend Energy   - leaking pipe   - replace radiator 3"
+    }
+  ],
+  "projects": {
+    "Boat": [
+      {
+        "file": "WorldCat.md",
+        "tokens": 1151,
+        "summary": "# 2011 World Cat 290 DC  ## Overview  The World Cat 290 DC (Dual Console) is a semi-displacement pow"
+      },
+      {
+        "file": "project.md",
+        "tokens": 974,
+        "summary": "# 2011 WorldCat 290 DC \u2014 Project File  ---  ### Links  - [Boat Trader Listing](https://www.boattrade"
+      },
+      {
+        "file": "todo.md",
+        "tokens": 1303,
+        "summary": "# Boat To-Do List  > \ud83d\udd34 Must and \ud83d\udfe1 Should items are being completed at: > **New England Auto & Boat S"
+      }
+    ],
+    "knowl": [
+      {
+        "file": "CompetitiveAnalysis.md",
+        "tokens": 178,
+        "summary": "# Knowl vs. Claude Cowork \u2014 Competitive Summary  ## Cowork in one line Autonomous task executor for"
+      }
+    ],
+    "knowl-app": [
+      {
+        "file": "project.md",
+        "tokens": 10,
+        "summary": "# knowl-app  Project context goes here."
+      }
+    ]
+  }
+}
