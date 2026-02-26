@@ -1,0 +1,10 @@
+{
+  "llm": {
+    "model": "claude-sonnet-4-6"
+  },
+  "voice": {
+    "whisper_model": "base",
+    "language": "auto"
+  },
+  "active_project": "Boat"
+}

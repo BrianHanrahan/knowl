@@ -91,9 +91,9 @@ export default function App() {
         </aside>
 
         <main className="main-panel">
-          {view === "chat" && (
+          <div style={{ display: view === "chat" ? "contents" : "none" }}>
             <ChatView project={activeProject} refreshKey={refreshKey} />
-          )}
+          </div>
           {view === "editor" && editingFile && (
             <ContextEditor filePath={editingFile} onClose={handleEditorClose} />
           )}

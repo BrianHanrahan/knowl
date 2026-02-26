@@ -1,4 +1,5 @@
 import { useState } from "react";
+import VoiceMicButton from "./VoiceMicButton";
 
 interface Props {
   projects: string[];
@@ -51,6 +52,9 @@ export default function ProjectSelector({
             placeholder="Project name"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
+          />
+          <VoiceMicButton
+            onTranscript={(text) => setNewName(text.trim())}
           />
           <button type="submit" className="btn btn-sm">
             Create

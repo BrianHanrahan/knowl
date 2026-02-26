@@ -235,6 +235,18 @@ body {
   color: var(--accent);
 }
 
+.rename-input {
+  flex: 1;
+  font-size: 13px;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  color: var(--text);
+  outline: none;
+  min-width: 0;
+}
+
 .file-tokens {
   font-size: 11px;
   color: var(--text-dim);
@@ -399,6 +411,29 @@ body {
   margin-left: 2px;
 }
 
+.tool-status {
+  color: var(--accent);
+  font-style: italic;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 @keyframes blink {
   50% {
     opacity: 0;
@@ -475,20 +510,206 @@ body {
   font-size: 13px;
 }
 
-.editor-textarea {
-  flex: 1;
-  padding: 16px;
-  border: none;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 14px;
-  resize: none;
-  line-height: 1.5;
+/* ── Editor Toolbar ─────────────────────────────────────────────── */
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  flex-wrap: wrap;
 }
 
-.editor-textarea:focus {
+.toolbar-btn {
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font);
+  line-height: 1;
+  transition: all 0.12s;
+}
+
+.toolbar-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.toolbar-btn-active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.toolbar-btn-active:hover {
+  background: var(--accent-hover);
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+/* ── Tiptap Editor ──────────────────────────────────────────────── */
+
+.tiptap-editor {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.tiptap-editor .tiptap {
+  padding: 16px;
+  min-height: 100%;
   outline: none;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.tiptap-editor .tiptap > * + * {
+  margin-top: 0.5em;
+}
+
+.tiptap-editor .tiptap h1 {
+  font-size: 1.8em;
+  font-weight: 700;
+  margin-top: 1em;
+  margin-bottom: 0.3em;
+  color: var(--text);
+}
+
+.tiptap-editor .tiptap h2 {
+  font-size: 1.4em;
+  font-weight: 600;
+  margin-top: 0.8em;
+  margin-bottom: 0.3em;
+  color: var(--text);
+}
+
+.tiptap-editor .tiptap h3 {
+  font-size: 1.15em;
+  font-weight: 600;
+  margin-top: 0.6em;
+  margin-bottom: 0.2em;
+  color: var(--text);
+}
+
+.tiptap-editor .tiptap p {
+  margin: 0.4em 0;
+}
+
+.tiptap-editor .tiptap strong {
+  font-weight: 700;
+}
+
+.tiptap-editor .tiptap em {
+  font-style: italic;
+}
+
+.tiptap-editor .tiptap s {
+  text-decoration: line-through;
+}
+
+.tiptap-editor .tiptap code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--bg-elevated);
+  padding: 2px 5px;
+  border-radius: 3px;
+  color: #e06c75;
+}
+
+.tiptap-editor .tiptap pre {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
+.tiptap-editor .tiptap pre code {
+  background: none;
+  padding: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.tiptap-editor .tiptap ul,
+.tiptap-editor .tiptap ol {
+  padding-left: 1.5em;
+  margin: 0.4em 0;
+}
+
+.tiptap-editor .tiptap li {
+  margin: 0.15em 0;
+}
+
+.tiptap-editor .tiptap li p {
+  margin: 0;
+}
+
+.tiptap-editor .tiptap blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+  margin: 8px 0;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.tiptap-editor .tiptap hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 16px 0;
+}
+
+.tiptap-editor .tiptap a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.tiptap-editor .tiptap table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+  overflow: hidden;
+}
+
+.tiptap-editor .tiptap table td,
+.tiptap-editor .tiptap table th {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  min-width: 80px;
+  vertical-align: top;
+  font-size: 13px;
+}
+
+.tiptap-editor .tiptap table th {
+  background: var(--bg-elevated);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tiptap-editor .tiptap table td {
+  background: var(--bg-surface);
+}
+
+.tiptap-editor .tiptap table .selectedCell {
+  background: rgba(59, 130, 246, 0.15);
+}
+
+.tiptap-editor .tiptap table td > p,
+.tiptap-editor .tiptap table th > p {
+  margin: 0;
 }
 
 /* ── Context Inspect ─────────────────────────────────────────────── */
@@ -561,4 +782,59 @@ body {
   padding: 40px;
   text-align: center;
   color: var(--text-dim);
+}
+
+/* ── Voice Mic Button ───────────────────────────────────────────── */
+
+.voice-mic-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.voice-mic-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.voice-mic-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.voice-mic-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.voice-mic-btn.listening {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+  animation: mic-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(231, 76, 60, 0); }
+}
+
+.voice-interim {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-style: italic;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

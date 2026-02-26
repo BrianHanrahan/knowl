@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import * as api from "../api";
+import VoiceMicButton from "./VoiceMicButton";
 
 interface Props {
   project: string | null;
@@ -21,6 +22,8 @@ export default function ContextPanel({
   const [newFileScope, setNewFileScope] = useState<"global" | "project">(
     "project"
   );
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   useEffect(() => {
     api.getGlobalFiles().then(setGlobalFiles);
@@ -53,6 +56,25 @@ export default function ContextPanel({
     onRefresh();
   };
 
+  const handleRenameStart = (file: api.ContextFile) => {
+    setRenamingPath(file.path);
+    setRenameValue(file.name);
+  };
+
+  const handleRenameSubmit = async () => {
+    if (!renamingPath || !renameValue.trim()) {
+      setRenamingPath(null);
+      return;
+    }
+    try {
+      await api.renameFile(renamingPath, renameValue.trim());
+      setRenamingPath(null);
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
   const handleDelete = async (path: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm("Delete this file?")) return;
@@ -72,13 +94,28 @@ export default function ContextPanel({
               <span className="file-check active-always" title="Always active">
                 *
               </span>
-              <span
-                className="file-name"
-                onClick={() => onFileClick(f.path)}
-                title={f.path}
-              >
-                {f.name}
-              </span>
+              {renamingPath === f.path ? (
+                <input
+                  className="rename-input"
+                  autoFocus
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onBlur={handleRenameSubmit}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleRenameSubmit();
+                    if (e.key === "Escape") setRenamingPath(null);
+                  }}
+                />
+              ) : (
+                <span
+                  className="file-name"
+                  onClick={() => onFileClick(f.path)}
+                  onDoubleClick={(e) => { e.stopPropagation(); handleRenameStart(f); }}
+                  title="Click to edit, double-click to rename"
+                >
+                  {f.name}
+                </span>
+              )}
               <span className="file-tokens">{f.tokens}t</span>
               <button
                 className="btn-icon"
@@ -106,13 +143,28 @@ export default function ContextPanel({
                 onChange={() => handleToggle(f)}
                 title={f.active ? "Deactivate" : "Activate"}
               />
-              <span
-                className="file-name"
-                onClick={() => onFileClick(f.path)}
-                title={f.path}
-              >
-                {f.name}
-              </span>
+              {renamingPath === f.path ? (
+                <input
+                  className="rename-input"
+                  autoFocus
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onBlur={handleRenameSubmit}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleRenameSubmit();
+                    if (e.key === "Escape") setRenamingPath(null);
+                  }}
+                />
+              ) : (
+                <span
+                  className="file-name"
+                  onClick={() => onFileClick(f.path)}
+                  onDoubleClick={(e) => { e.stopPropagation(); handleRenameStart(f); }}
+                  title="Click to edit, double-click to rename"
+                >
+                  {f.name}
+                </span>
+              )}
               <span className="file-tokens">{f.tokens}t</span>
               <button
                 className="btn-icon"
@@ -139,6 +191,9 @@ export default function ContextPanel({
             placeholder="filename.md"
             value={newFileName}
             onChange={(e) => setNewFileName(e.target.value)}
+          />
+          <VoiceMicButton
+            onTranscript={(text) => setNewFileName(text.trim())}
           />
           {project && (
             <select

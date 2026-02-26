@@ -113,6 +113,22 @@ export const promoteFile = (project: string, filename: string) =>
     body: JSON.stringify({ project, filename }),
   });
 
+export const renameFile = (path: string, newName: string) =>
+  request<{ old_path: string; new_path: string }>("/api/context/rename", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, new_name: newName }),
+  });
+
+// ── Format ──────────────────────────────────────────────────────────
+
+export const formatFile = (content: string) =>
+  request<{ content: string }>("/api/format-file", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+
 // ── Inspect ─────────────────────────────────────────────────────────
 
 export interface InspectResponse {
@@ -162,11 +178,14 @@ export function streamChat(
     onChunk: (text: string) => void;
     onDone: (fullText: string) => void;
     onError: (error: string) => void;
+    onToolCall?: (name: string, input: Record<string, unknown>) => void;
   },
   project?: string,
   model?: string
 ): AbortController {
   const controller = new AbortController();
+
+  let receivedDone = false;
 
   fetch("/api/chat", {
     method: "POST",
@@ -187,34 +206,42 @@ export function streamChat(
       const decoder = new TextDecoder();
       let buffer = "";
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
 
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === "chunk") {
-              callbacks.onChunk(data.text);
-            } else if (data.type === "done") {
-              callbacks.onDone(data.full_text);
-            } else if (data.type === "error") {
-              callbacks.onError(data.error);
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === "chunk") {
+                callbacks.onChunk(data.text);
+              } else if (data.type === "tool_call") {
+                callbacks.onToolCall?.(data.name, data.input);
+              } else if (data.type === "done") {
+                receivedDone = true;
+                callbacks.onDone(data.full_text);
+              } else if (data.type === "error") {
+                callbacks.onError(data.error);
+              }
+            } catch {
+              // skip malformed lines
             }
-          } catch {
-            // skip malformed lines
           }
         }
+      } catch {
+        // Stream read error after done event is fine — server closed the connection
+        if (!receivedDone) throw new Error("Stream interrupted");
       }
     })
     .catch((err) => {
-      if (err.name !== "AbortError") {
-        callbacks.onError(err.message);
+      if (err.name !== "AbortError" && !receivedDone) {
+        callbacks.onError(err.message || "Network error — is the server running?");
       }
     });
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import * as api from "../api";
+import VoiceMicButton from "./VoiceMicButton";
 
 interface Props {
   project: string | null;
@@ -17,6 +18,7 @@ export default function ChatView({ project, refreshKey }: Props) {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
+  const [toolStatus, setToolStatus] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -40,12 +42,33 @@ export default function ChatView({ project, refreshKey }: Props) {
     setMessages((prev) => [...prev, { role: "user", content: msg }]);
     setStreaming(true);
     setStreamingText("");
+    setToolStatus(null);
 
     abortRef.current = api.streamChat(
       msg,
       {
         onChunk: (text) => {
+          setToolStatus(null);
           setStreamingText((prev) => prev + text);
+        },
+        onToolCall: (name, input) => {
+          const inp = input as Record<string, any>;
+          if (name === "web_search") {
+            setToolStatus(`Searching: "${inp.query}"...`);
+          } else if (name === "fetch_page") {
+            setToolStatus(`Reading: ${inp.url}...`);
+          } else if (name === "list_context_files") {
+            setToolStatus(`Listing context files...`);
+          } else if (name === "read_context_file") {
+            setToolStatus(`Reading: ${inp.path?.split("/").pop()}...`);
+          } else if (name === "write_context_file") {
+            const target = inp.path?.split("/").pop() || inp.filename || "file";
+            setToolStatus(`Writing: ${target}...`);
+          } else if (name === "delete_context_file") {
+            setToolStatus(`Deleting: ${inp.path?.split("/").pop()}...`);
+          } else {
+            setToolStatus(`Running: ${name}...`);
+          }
         },
         onDone: (fullText) => {
           setMessages((prev) => [
@@ -53,6 +76,7 @@ export default function ChatView({ project, refreshKey }: Props) {
             { role: "assistant", content: fullText },
           ]);
           setStreamingText("");
+          setToolStatus(null);
           setStreaming(false);
         },
         onError: (error) => {
@@ -61,6 +85,7 @@ export default function ChatView({ project, refreshKey }: Props) {
             { role: "assistant", content: `Error: ${error}` },
           ]);
           setStreamingText("");
+          setToolStatus(null);
           setStreaming(false);
         },
       },
@@ -110,6 +135,16 @@ export default function ChatView({ project, refreshKey }: Props) {
           </div>
         ))}
 
+        {streaming && toolStatus && !streamingText && (
+          <div className="chat-message chat-assistant">
+            <div className="chat-role">Claude</div>
+            <div className="chat-content tool-status">
+              <span className="tool-spinner" />
+              {toolStatus}
+            </div>
+          </div>
+        )}
+
         {streaming && streamingText && (
           <div className="chat-message chat-assistant">
             <div className="chat-role">Claude</div>
@@ -131,6 +166,10 @@ export default function ChatView({ project, refreshKey }: Props) {
           placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
           disabled={streaming}
           rows={2}
+        />
+        <VoiceMicButton
+          onTranscript={(text) => setInput((prev) => prev + text)}
+          disabled={streaming}
         />
         <button
           className="btn btn-primary"
