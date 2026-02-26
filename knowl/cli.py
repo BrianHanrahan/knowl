@@ -663,7 +663,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
     app = create_app(dev=dev)
 
     host = args.host if hasattr(args, "host") else "127.0.0.1"
-    port = args.port if hasattr(args, "port") else 8000
+    port = args.port if hasattr(args, "port") else 6060
 
     print(f"Knowl Web UI — http://{host}:{port}")
     if dev:
@@ -788,7 +788,7 @@ def main() -> None:
     # serve
     serve_p = sub.add_parser("serve", help="Start the Knowl web UI")
     serve_p.add_argument("--host", default="127.0.0.1", help="Host to bind to")
-    serve_p.add_argument("--port", type=int, default=8000, help="Port to listen on")
+    serve_p.add_argument("--port", type=int, default=6060, help="Port to listen on")
     serve_p.add_argument("--dev", action="store_true", help="Enable dev mode (CORS for Vite)")
 
     # status
