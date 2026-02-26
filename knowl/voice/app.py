@@ -4,6 +4,7 @@ This module is the original transcriber app, now importing core functions
 from knowl.voice.transcribe. Run it directly or via --ui for the GUI.
 """
 import argparse
+import functools
 import json
 import os
 import subprocess
