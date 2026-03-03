@@ -179,6 +179,7 @@ export function streamChat(
     onDone: (fullText: string) => void;
     onError: (error: string) => void;
     onToolCall?: (name: string, input: Record<string, unknown>) => void;
+    onToolProposal?: (tool: Record<string, unknown>) => void;
   },
   project?: string,
   model?: string
@@ -223,6 +224,8 @@ export function streamChat(
                 callbacks.onChunk(data.text);
               } else if (data.type === "tool_call") {
                 callbacks.onToolCall?.(data.name, data.input);
+              } else if (data.type === "tool_proposal") {
+                callbacks.onToolProposal?.(data.tool);
               } else if (data.type === "done") {
                 receivedDone = true;
                 callbacks.onDone(data.full_text);
@@ -236,6 +239,168 @@ export function streamChat(
         }
       } catch {
         // Stream read error after done event is fine — server closed the connection
+        if (!receivedDone) throw new Error("Stream interrupted");
+      }
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError" && !receivedDone) {
+        callbacks.onError(err.message || "Network error — is the server running?");
+      }
+    });
+
+  return controller;
+}
+
+// ── Custom Tools ────────────────────────────────────────────────────
+
+export interface CustomTool {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  implementation: string;
+  status: "pending" | "approved" | "rejected" | "disabled";
+  created_at: string;
+  version: number;
+}
+
+export const getTools = (project: string) =>
+  request<{ tools: CustomTool[] }>(
+    `/api/tools/${encodeURIComponent(project)}`
+  );
+
+export const approveTool = (project: string, name: string) =>
+  request<{ name: string; status: string }>(
+    `/api/tools/${encodeURIComponent(project)}/${encodeURIComponent(name)}/approve`,
+    { method: "PUT" }
+  );
+
+export const rejectTool = (project: string, name: string) =>
+  request<{ name: string; status: string }>(
+    `/api/tools/${encodeURIComponent(project)}/${encodeURIComponent(name)}/reject`,
+    { method: "PUT" }
+  );
+
+export const disableTool = (project: string, name: string) =>
+  request<{ name: string; status: string }>(
+    `/api/tools/${encodeURIComponent(project)}/${encodeURIComponent(name)}/disable`,
+    { method: "PUT" }
+  );
+
+export const enableTool = (project: string, name: string) =>
+  request<{ name: string; status: string }>(
+    `/api/tools/${encodeURIComponent(project)}/${encodeURIComponent(name)}/enable`,
+    { method: "PUT" }
+  );
+
+export const deleteTool = (project: string, name: string) =>
+  request<{ deleted: string }>(
+    `/api/tools/${encodeURIComponent(project)}/${encodeURIComponent(name)}`,
+    { method: "DELETE" }
+  );
+
+// ── Uploads ─────────────────────────────────────────────────────────
+
+export interface UploadedFile {
+  name: string;
+  size: number;
+  modified: string;
+}
+
+export const uploadFile = async (project: string, file: File) => {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`/api/uploads/${encodeURIComponent(project)}`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(body.detail || res.statusText);
+  }
+  return res.json() as Promise<{ name: string; path: string; size: number }>;
+};
+
+export const listUploads = (project: string) =>
+  request<UploadedFile[]>(`/api/uploads/${encodeURIComponent(project)}`);
+
+export const deleteUpload = (project: string, filename: string) =>
+  request<{ deleted: string }>(
+    `/api/uploads/${encodeURIComponent(project)}/${encodeURIComponent(filename)}`,
+    { method: "DELETE" }
+  );
+
+/** Send a chat message with file attachments via multipart form. Returns an AbortController. */
+export function streamChatWithFiles(
+  message: string,
+  files: File[],
+  callbacks: {
+    onChunk: (text: string) => void;
+    onDone: (fullText: string) => void;
+    onError: (error: string) => void;
+    onToolCall?: (name: string, input: Record<string, unknown>) => void;
+    onToolProposal?: (tool: Record<string, unknown>) => void;
+  },
+  project?: string,
+  model?: string
+): AbortController {
+  const controller = new AbortController();
+  let receivedDone = false;
+
+  const form = new FormData();
+  form.append("message", message);
+  if (project) form.append("project", project);
+  if (model) form.append("model", model);
+  for (const f of files) form.append("files", f);
+
+  fetch("/api/chat/upload", {
+    method: "POST",
+    body: form,
+    signal: controller.signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ detail: res.statusText }));
+        callbacks.onError(body.detail || res.statusText);
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) return;
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === "chunk") {
+                callbacks.onChunk(data.text);
+              } else if (data.type === "tool_call") {
+                callbacks.onToolCall?.(data.name, data.input);
+              } else if (data.type === "tool_proposal") {
+                callbacks.onToolProposal?.(data.tool);
+              } else if (data.type === "done") {
+                receivedDone = true;
+                callbacks.onDone(data.full_text);
+              } else if (data.type === "error") {
+                callbacks.onError(data.error);
+              }
+            } catch {
+              // skip malformed lines
+            }
+          }
+        }
+      } catch {
         if (!receivedDone) throw new Error("Stream interrupted");
       }
     })

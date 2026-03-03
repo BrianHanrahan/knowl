@@ -2,13 +2,17 @@
 
 
 import asyncio
+import functools
 import json
 import os
 from pathlib import Path
 from typing import Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import Body, FastAPI, HTTPException, Query, Request
+import base64
+import mimetypes
+
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -100,6 +104,8 @@ def create_app(dev: bool = False) -> FastAPI:
     _register_context_routes(app)
     _register_inspect_routes(app)
     _register_chat_routes(app)
+    _register_tool_routes(app)
+    _register_upload_routes(app)
     _register_promotion_routes(app)
 
     # Serve React build in production
@@ -332,7 +338,7 @@ def _register_chat_routes(app: FastAPI) -> None:
         store.clear_history(project)
         return {"cleared": True, "project": project}
 
-    async def execute_tool(name: str, input_data: dict) -> str:
+    async def execute_tool(name: str, input_data: dict, project: Optional[str] = None) -> str:
         """Dispatch a tool call to the appropriate implementation."""
         # Web tools
         if name == "web_search":
@@ -405,8 +411,62 @@ def _register_chat_routes(app: FastAPI) -> None:
                 return json.dumps({"error": f"File not found: {dpath}"})
             return json.dumps({"success": True, "deleted": dpath})
 
+        # Meta-tool: create a new custom tool
+        elif name == "create_tool":
+            if not project:
+                return json.dumps({"error": "Cannot create tools without an active project."})
+            from datetime import datetime, timezone
+            tool_data = {
+                "name": input_data["name"],
+                "description": input_data["description"],
+                "input_schema": input_data["input_schema"],
+                "implementation": input_data["implementation"],
+                "status": "pending",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "version": 1,
+            }
+            store.save_tool(project, tool_data)
+            return json.dumps({
+                "success": True,
+                "message": (
+                    f"Tool '{input_data['name']}' has been proposed and is awaiting user approval. "
+                    f"IMPORTANT: You CANNOT call this tool yet. The user must approve it first via the UI. "
+                    f"Do NOT attempt to call '{input_data['name']}' — it will fail until approved. "
+                    f"Tell the user the tool has been proposed and they can approve it in the sidebar or inline."
+                ),
+                "status": "pending",
+            })
+
         else:
-            available = "web_search, fetch_page, list_context_files, read_context_file, write_context_file, delete_context_file"
+            # Check if this is a custom tool
+            if project:
+                tool = store.get_tool(project, name)
+                if tool:
+                    status = tool.get("status")
+                    if status == "approved":
+                        from knowl.tools.executor import execute_custom_tool, ToolExecutionError
+                        try:
+                            result = await asyncio.to_thread(
+                                execute_custom_tool, project, name, input_data
+                            )
+                            return result
+                        except ToolExecutionError as exc:
+                            return json.dumps({"error": str(exc)})
+                    elif status == "pending":
+                        return json.dumps({
+                            "error": f"Tool '{name}' exists but is pending user approval. "
+                            f"Do NOT retry — wait for the user to approve it in the UI first."
+                        })
+                    elif status == "disabled":
+                        return json.dumps({
+                            "error": f"Tool '{name}' is currently disabled by the user."
+                        })
+                    else:
+                        return json.dumps({
+                            "error": f"Tool '{name}' has status '{status}' and cannot be used."
+                        })
+
+            available = "web_search, fetch_page, list_context_files, read_context_file, write_context_file, delete_context_file, create_tool"
             return json.dumps({
                 "error": f"Unknown tool: {name}. Available tools: {available}"
             })
@@ -423,18 +483,24 @@ def _register_chat_routes(app: FastAPI) -> None:
         async def event_stream():
             full_response = []
             try:
+                bound_executor = functools.partial(execute_tool, project=project)
                 async for event in claude.stream_message_with_tools(
                     user_message=payload.message,
-                    tool_executor=execute_tool,
+                    tool_executor=bound_executor,
                     context=context_pieces,
                     history=history,
                     model=model,
+                    project=project,
                 ):
                     if isinstance(event, TextChunkEvent):
                         full_response.append(event.text)
                         yield f"data: {json.dumps({'type': 'chunk', 'text': event.text})}\n\n"
                     elif isinstance(event, ToolCallEvent):
-                        yield f"data: {json.dumps({'type': 'tool_call', 'name': event.name, 'input': event.input})}\n\n"
+                        if event.name == "create_tool":
+                            # Emit as a tool_proposal so the frontend renders approval UI
+                            yield f"data: {json.dumps({'type': 'tool_proposal', 'tool': event.input})}\n\n"
+                        else:
+                            yield f"data: {json.dumps({'type': 'tool_call', 'name': event.name, 'input': event.input})}\n\n"
                     elif isinstance(event, DoneEvent):
                         response_text = event.full_text
                         try:
@@ -452,6 +518,242 @@ def _register_chat_routes(app: FastAPI) -> None:
             media_type="text/event-stream",
             headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
         )
+
+    @app.post("/api/chat/upload")
+    async def chat_with_files(
+        message: str = Form(...),
+        project: Optional[str] = Form(None),
+        model: Optional[str] = Form(None),
+        files: list[UploadFile] = File(default=[]),
+    ):
+        if len(files) > 10:
+            raise HTTPException(status_code=400, detail="Maximum 10 files allowed")
+
+        config = store.load_config()
+        proj = project if project is not None else config.get("active_project")
+        mdl = model or config.get("llm", {}).get("model", "claude-sonnet-4-6")
+
+        # Build attachment content blocks
+        IMAGE_MIMES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+        TEXT_EXTENSIONS = {
+            ".txt", ".md", ".csv", ".json", ".xml", ".py", ".js", ".ts",
+            ".html", ".css", ".yaml", ".yml", ".toml", ".ini", ".cfg",
+            ".sh", ".bash", ".rb", ".go", ".rs", ".java", ".c", ".cpp",
+            ".h", ".hpp", ".sql", ".r", ".swift", ".kt", ".lua",
+        }
+
+        attachments: list[dict] = []
+        file_descriptions: list[str] = []
+
+        for f in files:
+            data = await f.read()
+            if len(data) > 20 * 1024 * 1024:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File '{f.filename}' exceeds 20MB limit",
+                )
+
+            mime = f.content_type or mimetypes.guess_type(f.filename or "")[0] or ""
+            ext = Path(f.filename or "").suffix.lower()
+
+            if mime in IMAGE_MIMES:
+                b64 = base64.standard_b64encode(data).decode("ascii")
+                attachments.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": mime,
+                        "data": b64,
+                    },
+                })
+                file_descriptions.append(f"[Image: {f.filename}]")
+            elif mime == "application/pdf":
+                b64 = base64.standard_b64encode(data).decode("ascii")
+                attachments.append({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": b64,
+                    },
+                })
+                file_descriptions.append(f"[PDF: {f.filename}]")
+            elif ext in TEXT_EXTENSIONS or mime.startswith("text/"):
+                try:
+                    text_content = data.decode("utf-8")
+                except UnicodeDecodeError:
+                    text_content = data.decode("latin-1")
+                attachments.append({
+                    "type": "text",
+                    "text": f"--- {f.filename} ---\n{text_content}",
+                })
+                file_descriptions.append(f"[File: {f.filename}]")
+            else:
+                # Treat unknown as text if small, else skip
+                if len(data) < 1024 * 1024:
+                    try:
+                        text_content = data.decode("utf-8")
+                        attachments.append({
+                            "type": "text",
+                            "text": f"--- {f.filename} ---\n{text_content}",
+                        })
+                        file_descriptions.append(f"[File: {f.filename}]")
+                    except UnicodeDecodeError:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Unsupported file type: {f.filename} ({mime})",
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unsupported file type: {f.filename} ({mime})",
+                    )
+
+        context_pieces = store.assemble_context(proj)
+        history = store.load_history(proj)
+
+        # For history, store text description instead of base64
+        history_content = message
+        if file_descriptions:
+            history_content = message + "\n\nAttachments: " + ", ".join(file_descriptions)
+
+        async def event_stream():
+            try:
+                bound_executor = functools.partial(execute_tool, project=proj)
+                async for event in claude.stream_message_with_tools(
+                    user_message=message,
+                    tool_executor=bound_executor,
+                    context=context_pieces,
+                    history=history,
+                    model=mdl,
+                    project=proj,
+                    attachments=attachments if attachments else None,
+                ):
+                    if isinstance(event, TextChunkEvent):
+                        yield f"data: {json.dumps({'type': 'chunk', 'text': event.text})}\n\n"
+                    elif isinstance(event, ToolCallEvent):
+                        if event.name == "create_tool":
+                            yield f"data: {json.dumps({'type': 'tool_proposal', 'tool': event.input})}\n\n"
+                        else:
+                            yield f"data: {json.dumps({'type': 'tool_call', 'name': event.name, 'input': event.input})}\n\n"
+                    elif isinstance(event, DoneEvent):
+                        response_text = event.full_text
+                        try:
+                            history.append({"role": "user", "content": history_content})
+                            history.append({"role": "assistant", "content": response_text})
+                            store.save_history(proj, history)
+                        except Exception:
+                            pass
+                        yield f"data: {json.dumps({'type': 'done', 'full_text': response_text})}\n\n"
+            except Exception as exc:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+        )
+
+
+# ── Upload management routes ─────────────────────────────────────
+
+def _register_upload_routes(app: FastAPI) -> None:
+
+    @app.post("/api/uploads/{project}")
+    async def upload_file(project: str, file: UploadFile = File(...)):
+        if project not in store.list_projects():
+            raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+        data = await file.read()
+        try:
+            path = store.save_upload(project, file.filename or "unnamed", data)
+            return {"name": file.filename, "path": str(path), "size": len(data)}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/api/uploads/{project}")
+    async def list_uploads(project: str):
+        if project not in store.list_projects():
+            raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+        return store.list_uploads(project)
+
+    @app.delete("/api/uploads/{project}/{filename}")
+    async def delete_upload(project: str, filename: str):
+        ok = store.delete_upload(project, filename)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Upload not found")
+        return {"deleted": filename}
+
+
+# ── Tool management routes ───────────────────────────────────────────
+
+class ToolAction(BaseModel):
+    action: str  # "approve", "reject", "disable", "enable"
+
+def _register_tool_routes(app: FastAPI) -> None:
+
+    @app.get("/api/tools/{project}")
+    async def list_tools(project: str):
+        tools = store.load_tools(project)
+        return {"tools": list(tools.values())}
+
+    @app.put("/api/tools/{project}/{name}/approve")
+    async def approve_tool(project: str, name: str):
+        tool = store.get_tool(project, name)
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
+        if tool["status"] not in ("pending", "disabled"):
+            raise HTTPException(status_code=400, detail=f"Tool is {tool['status']}, cannot approve")
+        tool["status"] = "approved"
+        store.save_tool(project, tool)
+        # Write the executable script with HMAC auth
+        from knowl.tools.executor import write_tool_script
+        write_tool_script(project, tool)
+        return {"name": name, "status": "approved"}
+
+    @app.put("/api/tools/{project}/{name}/reject")
+    async def reject_tool(project: str, name: str):
+        tool = store.get_tool(project, name)
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
+        tool["status"] = "rejected"
+        store.save_tool(project, tool)
+        return {"name": name, "status": "rejected"}
+
+    @app.put("/api/tools/{project}/{name}/disable")
+    async def disable_tool(project: str, name: str):
+        tool = store.get_tool(project, name)
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
+        if tool["status"] != "approved":
+            raise HTTPException(status_code=400, detail=f"Tool is {tool['status']}, cannot disable")
+        tool["status"] = "disabled"
+        store.save_tool(project, tool)
+        return {"name": name, "status": "disabled"}
+
+    @app.put("/api/tools/{project}/{name}/enable")
+    async def enable_tool(project: str, name: str):
+        tool = store.get_tool(project, name)
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
+        if tool["status"] != "disabled":
+            raise HTTPException(status_code=400, detail=f"Tool is {tool['status']}, cannot enable")
+        tool["status"] = "approved"
+        store.save_tool(project, tool)
+        # Re-write script in case implementation changed
+        from knowl.tools.executor import write_tool_script
+        write_tool_script(project, tool)
+        return {"name": name, "status": "approved"}
+
+    @app.delete("/api/tools/{project}/{name}")
+    async def delete_tool_route(project: str, name: str):
+        ok = store.delete_tool(project, name)
+        if not ok:
+            raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
+        # Clean up script file if it exists
+        script_path = store.PROJECTS_DIR / project / "tools" / f"{name}.py"
+        if script_path.exists():
+            script_path.unlink()
+        return {"deleted": name}
 
 
 # ── Promotion routes ─────────────────────────────────────────────────

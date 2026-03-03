@@ -162,6 +162,48 @@ TOOLS = [
             "required": ["path"],
         },
     },
+    # Meta-tool for creating custom tools
+    {
+        "name": "create_tool",
+        "description": (
+            "Propose a new reusable tool that can be used in future conversations. "
+            "Use this when a user's request would benefit from a reusable capability "
+            "like a calculator, API client, data transformer, or any repeated computation. "
+            "The tool will be saved as pending and the user can approve or reject it. "
+            "The implementation must define a `run()` function that accepts keyword "
+            "arguments matching the input_schema properties and returns a JSON-serializable value."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Snake_case name for the tool (e.g. 'calculate_roi', 'fetch_weather').",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Human-readable description of what this tool does.",
+                },
+                "input_schema": {
+                    "type": "object",
+                    "description": (
+                        "JSON Schema for the tool's inputs. Must have type: 'object', "
+                        "properties dict, and required list."
+                    ),
+                },
+                "implementation": {
+                    "type": "string",
+                    "description": (
+                        "Python source code defining a `run()` function. "
+                        "The function signature must match the input_schema properties. "
+                        "It should return a JSON-serializable value (dict, list, str, number). "
+                        "Only use Python stdlib — no third-party imports."
+                    ),
+                },
+            },
+            "required": ["name", "description", "input_schema", "implementation"],
+        },
+    },
 ]
 
 
@@ -315,6 +357,8 @@ async def stream_message_with_tools(
     history: list[dict[str, str]] | None = None,
     model: str = "claude-sonnet-4-6",
     max_tokens: int = 4096,
+    project: str | None = None,
+    attachments: list[dict] | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Async generator that streams Claude responses with tool-use loop.
 
@@ -325,6 +369,15 @@ async def stream_message_with_tools(
 
     client = get_async_client()
     system_prompt = format_system_prompt(context or [])
+
+    # Build dynamic tools list: built-in + approved custom tools
+    all_tools = list(TOOLS)
+    custom_tool_names: list[str] = []
+    if project:
+        from knowl.context import store
+        custom_tools = store.list_approved_tools(project)
+        all_tools.extend(custom_tools)
+        custom_tool_names = [t["name"] for t in custom_tools]
 
     # Tell Claude exactly what tools it has so it doesn't hallucinate others
     tool_note = (
@@ -338,10 +391,18 @@ async def stream_message_with_tools(
         "- **read_context_file**: Read a context file's content by path.\n"
         "- **write_context_file**: Create or update a context file.\n"
         "- **delete_context_file**: Delete a context file by path.\n\n"
+        "**Meta tools:**\n"
+        "- **create_tool**: Propose a new reusable tool. Use this when a task would "
+        "benefit from a repeatable computation, API call, or data transformation.\n\n"
         "When the user asks you to save, remember, update, or modify information in their "
         "context, use the context tools. Always list files first to discover paths before "
         "reading or writing. When creating a new file, use filename + scope (not path)."
     )
+    if custom_tool_names:
+        tool_note += (
+            "\n\n**Custom tools** (user-approved, project-specific):\n"
+            + "".join(f"- **{n}**\n" for n in custom_tool_names)
+        )
     if system_prompt:
         system_prompt += tool_note
     else:
@@ -350,13 +411,20 @@ async def stream_message_with_tools(
     messages: list[dict] = []
     if history:
         messages.extend(history)
-    messages.append({"role": "user", "content": user_message})
+
+    # Build user message — use content blocks when attachments are present
+    if attachments:
+        user_content: list[dict] = [{"type": "text", "text": user_message}]
+        user_content.extend(attachments)
+        messages.append({"role": "user", "content": user_content})
+    else:
+        messages.append({"role": "user", "content": user_message})
 
     kwargs: dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
         "messages": messages,
-        "tools": TOOLS,
+        "tools": all_tools,
     }
     if system_prompt:
         kwargs["system"] = system_prompt

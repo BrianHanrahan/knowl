@@ -25,6 +25,7 @@ INDEX_PATH = KNOWL_DIR / "index.json"
 CONFIG_PATH = KNOWL_DIR / "config.json"
 
 MAX_CONTEXT_FILE_SIZE = 100 * 1024  # 100 KB
+MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20 MB
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "llm": {"model": "claude-sonnet-4-6"},
@@ -517,3 +518,129 @@ def clear_history(project_name: str | None) -> None:
             path.unlink()
         except OSError as exc:
             logger.error("Failed to clear history: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Custom tools
+# ---------------------------------------------------------------------------
+
+def _tools_path(project_name: str) -> Path:
+    """Return the path for a project's tools.json."""
+    return PROJECTS_DIR / project_name / "tools.json"
+
+
+def load_tools(project_name: str) -> dict[str, Any]:
+    """Load all custom tools for a project."""
+    path = _tools_path(project_name)
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and "tools" in data:
+                return data["tools"]
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Failed to read tools for %s: %s", project_name, exc)
+    return {}
+
+
+def save_tools(project_name: str, tools: dict[str, Any]) -> None:
+    """Write all custom tools for a project."""
+    path = _tools_path(project_name)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"tools": tools}, indent=2), encoding="utf-8")
+    except OSError as exc:
+        logger.error("Failed to save tools for %s: %s", project_name, exc)
+
+
+def get_tool(project_name: str, name: str) -> dict[str, Any] | None:
+    """Get a single custom tool by name."""
+    tools = load_tools(project_name)
+    return tools.get(name)
+
+
+def save_tool(project_name: str, tool: dict[str, Any]) -> None:
+    """Upsert a single custom tool."""
+    tools = load_tools(project_name)
+    tools[tool["name"]] = tool
+    save_tools(project_name, tools)
+
+
+def delete_tool(project_name: str, name: str) -> bool:
+    """Delete a custom tool by name. Returns True if it existed."""
+    tools = load_tools(project_name)
+    if name not in tools:
+        return False
+    del tools[name]
+    save_tools(project_name, tools)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# File uploads
+# ---------------------------------------------------------------------------
+
+def uploads_dir(project_name: str) -> Path:
+    """Return the uploads directory for a project, creating it if needed."""
+    d = PROJECTS_DIR / project_name / "uploads"
+    _validate_path(d)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def save_upload(project_name: str, filename: str, data: bytes) -> Path:
+    """Save an uploaded file to the project's uploads directory."""
+    if len(data) > MAX_UPLOAD_SIZE:
+        raise ValueError(
+            f"File size ({len(data)} bytes) exceeds limit ({MAX_UPLOAD_SIZE} bytes)."
+        )
+    dest = uploads_dir(project_name) / filename
+    _validate_path(dest)
+    dest.write_bytes(data)
+    logger.info("Saved upload %s/%s (%d bytes)", project_name, filename, len(data))
+    return dest
+
+
+def list_uploads(project_name: str) -> list[dict[str, Any]]:
+    """List uploaded files for a project."""
+    d = PROJECTS_DIR / project_name / "uploads"
+    _validate_path(d)
+    if not d.exists():
+        return []
+    result = []
+    for f in sorted(d.iterdir()):
+        if f.is_file():
+            result.append({
+                "name": f.name,
+                "size": f.stat().st_size,
+                "path": str(f),
+            })
+    return result
+
+
+def delete_upload(project_name: str, filename: str) -> bool:
+    """Delete an uploaded file. Returns True if it existed."""
+    path = PROJECTS_DIR / project_name / "uploads" / filename
+    _validate_path(path)
+    if not path.exists():
+        return False
+    path.unlink()
+    logger.info("Deleted upload %s/%s", project_name, filename)
+    return True
+
+
+def list_approved_tools(project_name: str) -> list[dict[str, Any]]:
+    """Return API-format tool dicts for approved (enabled) tools only."""
+    tools = load_tools(project_name)
+    result = []
+    for tool in tools.values():
+        if tool.get("status") == "approved":
+            result.append({
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                "input_schema": tool.get("input_schema", {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                }),
+            })
+    return result

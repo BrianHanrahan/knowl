@@ -1,0 +1,28 @@
+{
+  "tools": {
+    "get_youtube_transcript": {
+      "name": "get_youtube_transcript",
+      "description": "Extracts the transcript/captions from a YouTube video given its URL or video ID. Returns the full transcript as plain text, with optional timestamps.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "video_url": {
+            "type": "string",
+            "description": "YouTube video URL (e.g. https://www.youtube.com/watch?v=abc123) or just the video ID (e.g. abc123)"
+          },
+          "include_timestamps": {
+            "type": "boolean",
+            "description": "Whether to include timestamps in the transcript output. Default is false."
+          }
+        },
+        "required": [
+          "video_url"
+        ]
+      },
+      "implementation": "\nimport re\nimport json\nimport urllib.request\nimport urllib.parse\nimport html\nimport xml.etree.ElementTree as ET\n\ndef run(video_url: str, include_timestamps: bool = False) -> dict:\n    # Extract video ID\n    video_id = video_url.strip()\n    patterns = [\n        r'(?:v=|youtu\\.be/|embed/|shorts/)([A-Za-z0-9_-]{11})',\n    ]\n    for pattern in patterns:\n        m = re.search(pattern, video_url)\n        if m:\n            video_id = m.group(1)\n            break\n\n    if len(video_id) != 11:\n        return {\"error\": f\"Could not extract video ID from: {video_url}\"}\n\n    headers = {\n        \"User-Agent\": \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\",\n        \"Accept-Language\": \"en-US,en;q=0.9\",\n        \"Content-Type\": \"application/json\",\n    }\n\n    # Use youtubei API to get captions\n    api_url = \"https://www.youtube.com/youtubei/v1/get_transcript\"\n    payload = json.dumps({\n        \"context\": {\n            \"client\": {\n                \"clientName\": \"WEB\",\n                \"clientVersion\": \"2.20240101.00.00\",\n                \"hl\": \"en\",\n                \"gl\": \"US\"\n            }\n        },\n        \"params\": _encode_params(video_id)\n    }).encode(\"utf-8\")\n\n    req = urllib.request.Request(api_url, data=payload, headers=headers, method=\"POST\")\n    try:\n        with urllib.request.urlopen(req, timeout=10) as resp:\n            data = json.loads(resp.read().decode(\"utf-8\"))\n    except Exception as e:\n        return {\"error\": f\"Failed to call youtubei API: {e}\"}\n\n    # Parse transcript from response\n    try:\n        segments = (\n            data[\"actions\"][0][\"updateEngagementPanelAction\"][\"content\"]\n            [\"transcriptRenderer\"][\"content\"][\"transcriptSearchPanelRenderer\"]\n            [\"body\"][\"transcriptSegmentListRenderer\"][\"initialSegments\"]\n        )\n    except (KeyError, IndexError, TypeError):\n        return {\"error\": \"Could not parse transcript from API response. Video may not have a transcript.\"}\n\n    lines = []\n    for seg in segments:\n        renderer = seg.get(\"transcriptSegmentRenderer\", {})\n        text_runs = renderer.get(\"snippet\", {}).get(\"runs\", [])\n        text = html.unescape(\"\".join(r.get(\"text\", \"\") for r in text_runs)).strip()\n        if not text:\n            continue\n        if include_timestamps:\n            start_ms = int(renderer.get(\"startMs\", 0))\n            secs = start_ms // 1000\n            mins, s = divmod(secs, 60)\n            hrs, m = divmod(mins, 60)\n            if hrs:\n                ts = f\"[{hrs}:{m:02}:{s:02}]\"\n            else:\n                ts = f\"[{m}:{s:02}]\"\n            lines.append(f\"{ts} {text}\")\n        else:\n            lines.append(text)\n\n    if not lines:\n        return {\"error\": \"Transcript was empty.\"}\n\n    return {\"transcript\": \"\\n\".join(lines), \"video_id\": video_id, \"line_count\": len(lines)}\n\n\ndef _encode_params(video_id: str) -> str:\n    \"\"\"Encode the params field required by the get_transcript API.\"\"\"\n    import base64\n    # Proto encoding for: field 1 (string video_id), field 2 (string \"en\")\n    def encode_string_field(field_num: int, value: str) -> bytes:\n        encoded = value.encode(\"utf-8\")\n        tag = (field_num << 3) | 2  # wire type 2 = length-delimited\n        return _varint(tag) + _varint(len(encoded)) + encoded\n\n    def _varint(n: int) -> bytes:\n        buf = []\n        while True:\n            towrite = n & 0x7F\n            n >>= 7\n            if n:\n                buf.append(towrite | 0x80)\n            else:\n                buf.append(towrite)\n                break\n        return bytes(buf)\n\n    inner = encode_string_field(1, video_id)\n    outer = encode_string_field(1, base64.b64encode(inner).decode()) + encode_string_field(2, \"en\")\n    return base64.b64encode(outer).decode()\n",
+      "status": "approved",
+      "created_at": "2026-02-27T00:52:33.650958+00:00",
+      "version": 1
+    }
+  }
+}

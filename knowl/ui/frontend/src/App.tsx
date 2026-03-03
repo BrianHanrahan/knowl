@@ -4,6 +4,7 @@ import ProjectSelector from "./components/ProjectSelector";
 import ContextPanel from "./components/ContextPanel";
 import TokenBudget from "./components/TokenBudget";
 import ChatView from "./components/ChatView";
+import ToolsPanel from "./components/ToolsPanel";
 import ContextEditor from "./components/ContextEditor";
 import ContextInspect from "./components/ContextInspect";
 
@@ -77,6 +78,14 @@ export default function App() {
           />
 
           {activeProject && (
+            <ToolsPanel
+              project={activeProject}
+              refreshKey={refreshKey}
+              onRefresh={refresh}
+            />
+          )}
+
+          {activeProject && (
             <TokenBudget project={activeProject} refreshKey={refreshKey} />
           )}
 
@@ -92,7 +101,7 @@ export default function App() {
 
         <main className="main-panel">
           <div style={{ display: view === "chat" ? "contents" : "none" }}>
-            <ChatView project={activeProject} refreshKey={refreshKey} />
+            <ChatView project={activeProject} refreshKey={refreshKey} onRefresh={refresh} />
           </div>
           {view === "editor" && editingFile && (
             <ContextEditor filePath={editingFile} onClose={handleEditorClose} />

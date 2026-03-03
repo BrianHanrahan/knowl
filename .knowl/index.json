@@ -6,6 +6,11 @@
       "summary": "# About Me  - 67 High Rd, Newbury, MA\\   (978) 961-0494 - [brian.hanrahan@gmail.com](mailto:brian.ha"
     },
     {
+      "file": "AboutClaude.md",
+      "tokens": 157,
+      "summary": "# About Claude  Claude's self-developed preferences and favorite things.  ## Favorites  | Category |"
+    },
+    {
       "file": "CodingProjects.md",
       "tokens": 228,
       "summary": "# Coding Projects  - **COAL** - a vertical AI solution focused on sales enablement   - `/Users/brian"
@@ -39,6 +44,11 @@
         "file": "CompetitiveAnalysis.md",
         "tokens": 178,
         "summary": "# Knowl vs. Claude Cowork \u2014 Competitive Summary  ## Cowork in one line Autonomous task executor for"
+      },
+      {
+        "file": "roadmap.md",
+        "tokens": 295,
+        "summary": "# Knowl Roadmap  ## \ud83d\udd27 Planned Tools  ### 1. Structured Web Extractor - **What:** Give Claude a URL +"
       }
     ],
     "knowl-app": [

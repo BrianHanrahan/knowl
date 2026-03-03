@@ -401,6 +401,70 @@ body {
   margin: 6px 0;
 }
 
+.chat-assistant .chat-content h1,
+.chat-assistant .chat-content h2,
+.chat-assistant .chat-content h3 {
+  margin-top: 12px;
+  margin-bottom: 4px;
+  color: var(--text);
+}
+
+.chat-assistant .chat-content h1 { font-size: 1.4em; }
+.chat-assistant .chat-content h2 { font-size: 1.2em; }
+.chat-assistant .chat-content h3 { font-size: 1.05em; }
+
+.chat-assistant .chat-content ul,
+.chat-assistant .chat-content ol {
+  padding-left: 1.5em;
+  margin: 6px 0;
+}
+
+.chat-assistant .chat-content li {
+  margin: 3px 0;
+}
+
+.chat-assistant .chat-content blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+  margin: 8px 0;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.chat-assistant .chat-content a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.chat-assistant .chat-content hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+.chat-assistant .chat-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+}
+
+.chat-assistant .chat-content th,
+.chat-assistant .chat-content td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.chat-assistant .chat-content th {
+  background: var(--bg-elevated);
+  font-weight: 600;
+}
+
+.chat-assistant .chat-content img {
+  max-width: 100%;
+  border-radius: var(--radius);
+}
+
 .streaming-cursor {
   display: inline-block;
   width: 8px;
@@ -442,13 +506,20 @@ body {
 
 .chat-input-area {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 0;
   padding: 12px 16px;
   border-top: 1px solid var(--border);
   background: var(--bg-surface);
 }
 
-.chat-input-area textarea {
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.chat-input-row textarea {
   flex: 1;
   padding: 10px 12px;
   border-radius: var(--radius);
@@ -461,14 +532,108 @@ body {
   line-height: 1.4;
 }
 
-.chat-input-area textarea:focus {
+.chat-input-row textarea:focus {
   outline: none;
   border-color: var(--accent);
 }
 
-.chat-input-area .btn-primary {
+.chat-input-row .btn-primary {
   align-self: flex-end;
   padding: 10px 20px;
+}
+
+.btn-attach {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.15s;
+  align-self: flex-end;
+}
+
+.btn-attach:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.btn-attach:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Attached Files Bar ──────────────────────────────────────────── */
+
+.attached-files-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 8px;
+}
+
+.attached-file-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.attached-file-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attached-file-size {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.attached-file-remove {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.attached-file-remove:hover {
+  color: var(--danger);
+}
+
+/* ── Chat Message Attachments ────────────────────────────────────── */
+
+.chat-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.attachment-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.attachment-icon {
+  font-size: 12px;
 }
 
 /* ── Context Editor ──────────────────────────────────────────────── */
@@ -782,6 +947,159 @@ body {
   padding: 40px;
   text-align: center;
   color: var(--text-dim);
+}
+
+/* ── Tools Panel ────────────────────────────────────────────────── */
+
+.tools-panel {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.tools-panel h3 {
+  font-size: 14px;
+  margin-bottom: 8px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tool-section {
+  margin-bottom: 10px;
+}
+
+.tool-section h4 {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.tool-item {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(42, 42, 74, 0.5);
+}
+
+.tool-item:last-child {
+  border-bottom: none;
+}
+
+.tool-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tool-name {
+  flex: 1;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.tool-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.tool-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.tool-code-toggle {
+  font-size: 11px;
+  color: var(--accent);
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.tool-code-toggle:hover {
+  color: var(--accent-hover) !important;
+  background: none !important;
+}
+
+.tool-code {
+  background: var(--bg);
+  padding: 10px;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  margin-top: 6px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.tool-disabled .tool-name {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+
+/* ── Tool Proposal Card (inline in chat) ─────────────────────────── */
+
+.tool-proposal-card {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  max-width: 600px;
+}
+
+.tool-proposal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.tool-proposal-icon {
+  font-size: 16px;
+}
+
+.tool-proposal-desc {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.tool-proposal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.tool-proposal-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  margin-left: auto;
+}
+
+.badge-approved {
+  background: rgba(46, 204, 113, 0.2);
+  color: var(--success);
+}
+
+.badge-rejected {
+  background: rgba(231, 76, 60, 0.2);
+  color: var(--danger);
+}
+
+.tool-proposal-approved {
+  border-color: var(--success);
+  opacity: 0.8;
+}
+
+.tool-proposal-rejected {
+  border-color: var(--danger);
+  opacity: 0.6;
 }
 
 /* ── Voice Mic Button ───────────────────────────────────────────── */
