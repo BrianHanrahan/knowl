@@ -12,3 +12,6 @@ uvicorn[standard]
 pytest
 playwright
 ddgs
+mcp
+claude-agent-sdk
+pytest-asyncio
