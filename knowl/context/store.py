@@ -28,7 +28,7 @@ MAX_CONTEXT_FILE_SIZE = 100 * 1024  # 100 KB
 MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20 MB
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "llm": {"model": "claude-sonnet-4-6"},
+    "llm": {"model": "claude-sonnet-4-6", "backend": "api"},
     "voice": {"whisper_model": "base", "language": "auto"},
     "active_project": None,
 }

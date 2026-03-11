@@ -31,6 +31,7 @@ class CreateProject(BaseModel):
 class UpdateConfig(BaseModel):
     active_project: Optional[str] = None
     model: Optional[str] = None
+    backend: Optional[str] = None  # "api" or "cli"
 
 class WriteFile(BaseModel):
     path: str
@@ -172,8 +173,32 @@ def _register_config_routes(app: FastAPI) -> None:
             config["active_project"] = payload.active_project or None
         if payload.model is not None:
             config.setdefault("llm", {})["model"] = payload.model
+        if payload.backend is not None:
+            if payload.backend not in ("api", "cli"):
+                raise HTTPException(status_code=400, detail="backend must be 'api' or 'cli'")
+            config.setdefault("llm", {})["backend"] = payload.backend
         store.save_config(config)
         return config
+
+    @app.get("/api/config/backend")
+    async def get_backend():
+        config = store.load_config()
+        backend = config.get("llm", {}).get("backend", "api")
+        has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+        return {"backend": backend, "has_api_key": has_api_key}
+
+
+# ── Backend routing ───────────────────────────────────────────────────
+
+def _get_stream_fn(config: dict):
+    """Return the appropriate stream_message_with_tools based on backend config."""
+    backend = config.get("llm", {}).get("backend", "api")
+    if backend == "cli":
+        from knowl.llm.cli_backend import stream_message_with_tools
+        return stream_message_with_tools
+    else:
+        from knowl.llm.claude import stream_message_with_tools
+        return stream_message_with_tools
 
 
 # ── Context file routes ──────────────────────────────────────────────
@@ -260,6 +285,7 @@ def _register_context_routes(app: FastAPI) -> None:
     async def format_file(payload: FormatFile):
         config = store.load_config()
         model = payload.model or config.get("llm", {}).get("model", "claude-sonnet-4-6")
+        backend = config.get("llm", {}).get("backend", "api")
         prompt = (
             "Clean up the following markdown content. Fix markdown formatting "
             "(especially tables — ensure proper | pipe | syntax), remove duplicate "
@@ -269,11 +295,15 @@ def _register_context_routes(app: FastAPI) -> None:
             + payload.content
         )
         try:
-            result = await asyncio.to_thread(
-                claude.send_message,
-                user_message=prompt,
-                model=model,
-            )
+            if backend == "cli":
+                from knowl.llm.cli_backend import format_with_cli
+                result = await format_with_cli(prompt, model)
+            else:
+                result = await asyncio.to_thread(
+                    claude.send_message,
+                    user_message=prompt,
+                    model=model,
+                )
             return {"content": result}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
@@ -483,8 +513,9 @@ def _register_chat_routes(app: FastAPI) -> None:
         async def event_stream():
             full_response = []
             try:
+                stream_fn = _get_stream_fn(config)
                 bound_executor = functools.partial(execute_tool, project=project)
-                async for event in claude.stream_message_with_tools(
+                async for event in stream_fn(
                     user_message=payload.message,
                     tool_executor=bound_executor,
                     context=context_pieces,
@@ -497,7 +528,6 @@ def _register_chat_routes(app: FastAPI) -> None:
                         yield f"data: {json.dumps({'type': 'chunk', 'text': event.text})}\n\n"
                     elif isinstance(event, ToolCallEvent):
                         if event.name == "create_tool":
-                            # Emit as a tool_proposal so the frontend renders approval UI
                             yield f"data: {json.dumps({'type': 'tool_proposal', 'tool': event.input})}\n\n"
                         else:
                             yield f"data: {json.dumps({'type': 'tool_call', 'name': event.name, 'input': event.input})}\n\n"
@@ -508,7 +538,7 @@ def _register_chat_routes(app: FastAPI) -> None:
                             history.append({"role": "assistant", "content": response_text})
                             store.save_history(project, history)
                         except Exception:
-                            pass  # Don't break stream over history save failure
+                            pass
                         yield f"data: {json.dumps({'type': 'done', 'full_text': response_text})}\n\n"
             except Exception as exc:
                 yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
@@ -619,8 +649,9 @@ def _register_chat_routes(app: FastAPI) -> None:
 
         async def event_stream():
             try:
+                stream_fn = _get_stream_fn(config)
                 bound_executor = functools.partial(execute_tool, project=proj)
-                async for event in claude.stream_message_with_tools(
+                async for event in stream_fn(
                     user_message=message,
                     tool_executor=bound_executor,
                     context=context_pieces,
