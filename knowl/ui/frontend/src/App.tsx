@@ -7,8 +7,9 @@ import ChatView from "./components/ChatView";
 import ToolsPanel from "./components/ToolsPanel";
 import ContextEditor from "./components/ContextEditor";
 import ContextInspect from "./components/ContextInspect";
+import SettingsPanel from "./components/SettingsPanel";
 
-type View = "chat" | "editor" | "inspect";
+type View = "chat" | "editor" | "inspect" | "settings";
 
 export default function App() {
   const [projects, setProjects] = useState<string[]>([]);
@@ -66,6 +67,13 @@ export default function App() {
           onCreate={handleCreateProject}
         />
         <span className="model-badge">{model}</span>
+        <button
+          className={`btn btn-sm btn-icon ${view === "settings" ? "btn-active" : ""}`}
+          onClick={() => setView(view === "settings" ? "chat" : "settings")}
+          title="Settings"
+        >
+          &#9881;
+        </button>
       </header>
 
       <div className="app-body">
@@ -108,6 +116,9 @@ export default function App() {
           )}
           {view === "inspect" && (
             <ContextInspect project={activeProject} />
+          )}
+          {view === "settings" && (
+            <SettingsPanel onClose={() => setView("chat")} />
           )}
         </main>
       </div>

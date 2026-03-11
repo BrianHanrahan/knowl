@@ -36,15 +36,24 @@ export const deleteProject = (name: string) =>
 
 export interface Config {
   active_project: string | null;
-  llm?: { model?: string };
+  llm?: { model?: string; backend?: string };
   voice?: Record<string, unknown>;
+}
+
+export interface BackendStatus {
+  backend: string;
+  has_api_key: boolean;
 }
 
 export const getConfig = () => request<Config>("/api/config");
 
+export const getBackendStatus = () =>
+  request<BackendStatus>("/api/config/backend");
+
 export const updateConfig = (updates: {
   active_project?: string | null;
   model?: string;
+  backend?: string;
 }) =>
   request<Config>("/api/config", {
     method: "PUT",
