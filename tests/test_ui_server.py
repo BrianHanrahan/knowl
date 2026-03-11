@@ -10,8 +10,9 @@ from knowl.context import store
 
 
 @pytest.fixture
-def client(tmp_path):
+def client(tmp_path, monkeypatch):
     """Create a test client with isolated store."""
+    monkeypatch.setenv("KNOWL_DIR", str(tmp_path))
     store.set_knowl_dir(tmp_path)
     store.init_store()
     from knowl.ui.server import create_app
