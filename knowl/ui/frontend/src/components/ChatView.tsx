@@ -13,7 +13,6 @@ interface Props {
 interface Message {
   role: "user" | "assistant";
   content: string;
-  attachments?: string[]; // filenames for display
 }
 
 interface ToolProposal {
@@ -25,12 +24,6 @@ interface ToolProposal {
   showCode?: boolean;
 }
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 export default function ChatView({ project, refreshKey, onRefresh }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -38,7 +31,8 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
   const [streamingText, setStreamingText] = useState("");
   const [toolStatus, setToolStatus] = useState<string | null>(null);
   const [proposals, setProposals] = useState<ToolProposal[]>([]);
-  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<File[]>([]);
+  const [dragOver, setDragOver] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -55,19 +49,41 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
 
   useEffect(scrollToBottom, [messages, streamingText, scrollToBottom]);
 
+  const getFilePreview = useCallback((file: File): string | null => {
+    if (file.type.startsWith("image/")) {
+      return URL.createObjectURL(file);
+    }
+    return null;
+  }, []);
+
+  const removeFile = (index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const addFiles = (newFiles: FileList | File[]) => {
+    const arr = Array.from(newFiles);
+    setFiles((prev) => {
+      const combined = [...prev, ...arr];
+      if (combined.length > 10) {
+        alert("Maximum 10 files allowed");
+        return combined.slice(0, 10);
+      }
+      return combined;
+    });
+  };
+
   const handleSend = async () => {
     const msg = input.trim();
     if (!msg || streaming) return;
 
-    const filesToSend = [...attachedFiles];
-    const fileNames = filesToSend.map((f) => f.name);
-
+    const currentFiles = files;
     setInput("");
-    setAttachedFiles([]);
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: msg, attachments: fileNames.length ? fileNames : undefined },
-    ]);
+    setFiles([]);
+
+    const displayContent = currentFiles.length > 0
+      ? msg + "\n\nAttachments: " + currentFiles.map((f) => f.name).join(", ")
+      : msg;
+    setMessages((prev) => [...prev, { role: "user", content: displayContent }]);
     setStreaming(true);
     setStreamingText("");
     setToolStatus(null);
@@ -77,7 +93,7 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
         setToolStatus(null);
         setStreamingText((prev) => prev + text);
       },
-      onToolCall: (name: string, input: Record<string, unknown>) => {
+      onToolCall: (name: string, input: Record<string, any>) => {
         const inp = input as Record<string, any>;
         if (name === "web_search") {
           setToolStatus(`Searching: "${inp.query}"...`);
@@ -123,10 +139,10 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
       },
     };
 
-    if (filesToSend.length > 0) {
+    if (currentFiles.length > 0) {
       abortRef.current = api.streamChatWithFiles(
         msg,
-        filesToSend,
+        currentFiles,
         callbacks,
         project || undefined
       );
@@ -137,30 +153,6 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
         project || undefined
       );
     }
-  };
-
-  const handleAttachFiles = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-    const newFiles = Array.from(files);
-    setAttachedFiles((prev) => {
-      const combined = [...prev, ...newFiles];
-      if (combined.length > 10) {
-        alert("Maximum 10 files allowed");
-        return prev;
-      }
-      return combined;
-    });
-    // Reset input so same file can be re-selected
-    e.target.value = "";
-  };
-
-  const removeAttachedFile = (index: number) => {
-    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleProposalApprove = async (name: string) => {
@@ -209,8 +201,31 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
     }
   };
 
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files.length > 0) {
+      addFiles(e.dataTransfer.files);
+    }
+  };
+
   return (
-    <div className="chat-view">
+    <div
+      className={`chat-view ${dragOver ? "chat-dropzone" : ""}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <div className="chat-header">
         <span>Chat{project ? ` — ${project}` : ""}</span>
         <button className="btn btn-sm" onClick={handleClear}>
@@ -234,16 +249,6 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
               ) : (
                 m.content
-              )}
-              {m.attachments && m.attachments.length > 0 && (
-                <div className="chat-attachments">
-                  {m.attachments.map((name, j) => (
-                    <span key={j} className="attachment-badge">
-                      <span className="attachment-icon">&#128206;</span>
-                      {name}
-                    </span>
-                  ))}
-                </div>
               )}
             </div>
           </div>
@@ -312,62 +317,70 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="chat-input-area">
-        {attachedFiles.length > 0 && (
-          <div className="attached-files-bar">
-            {attachedFiles.map((f, i) => (
-              <span key={i} className="attached-file-pill">
-                <span className="attachment-icon">&#128206;</span>
-                <span className="attached-file-name">{f.name}</span>
-                <span className="attached-file-size">{formatFileSize(f.size)}</span>
+      {files.length > 0 && (
+        <div className="file-chips">
+          {files.map((f, i) => {
+            const preview = getFilePreview(f);
+            return (
+              <div key={`${f.name}-${i}`} className="file-chip">
+                {preview ? (
+                  <img src={preview} alt={f.name} className="file-chip-img" />
+                ) : (
+                  <span className="file-chip-icon">&#128196;</span>
+                )}
+                <span className="file-chip-name">{f.name}</span>
                 <button
-                  className="attached-file-remove"
-                  onClick={() => removeAttachedFile(i)}
-                  title="Remove"
+                  className="file-chip-remove"
+                  onClick={() => removeFile(i)}
+                  title="Remove file"
                 >
                   &times;
                 </button>
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="chat-input-row">
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            onChange={handleFileChange}
-            style={{ display: "none" }}
-            accept="image/*,.pdf,.txt,.md,.csv,.json,.xml,.py,.js,.ts,.html,.css,.yaml,.yml,.toml,.sh,.go,.rs,.java,.c,.cpp,.sql,.rb,.swift,.kt,.lua"
-          />
-          <button
-            className="btn btn-attach"
-            onClick={handleAttachFiles}
-            disabled={streaming}
-            title="Attach files"
-          >
-            &#128206;
-          </button>
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
-            disabled={streaming}
-            rows={2}
-          />
-          <VoiceMicButton
-            onTranscript={(text) => setInput((prev) => prev + text)}
-            disabled={streaming}
-          />
-          <button
-            className="btn btn-primary"
-            onClick={handleSend}
-            disabled={streaming || !input.trim()}
-          >
-            {streaming ? "..." : "Send"}
-          </button>
+              </div>
+            );
+          })}
         </div>
+      )}
+
+      <div className="chat-input-area">
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept="image/*,.txt,.md,.csv,.json,.pdf,.py,.xml,.js,.ts,.html,.css,.yaml,.yml,.toml,.sql,.go,.rs,.java,.c,.cpp,.rb,.sh"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            if (e.target.files) addFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <button
+          className="file-attach-btn"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={streaming}
+          title="Attach files"
+        >
+          &#128206;
+        </button>
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
+          disabled={streaming}
+          rows={2}
+        />
+        <VoiceMicButton
+          onTranscript={(text) => setInput((prev) => prev + text)}
+          disabled={streaming}
+        />
+        <button
+          className="btn btn-primary"
+          onClick={handleSend}
+          disabled={streaming || !input.trim()}
+        >
+          {streaming ? "..." : "Send"}
+        </button>
       </div>
     </div>
   );
