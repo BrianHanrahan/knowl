@@ -2,12 +2,21 @@
 
 Same async generator interface as claude.stream_message_with_tools(),
 yielding StreamEvent instances (TextChunkEvent, ToolCallEvent, DoneEvent).
+
+The Agent SDK uses anyio task groups internally. FastAPI's StreamingResponse
+consumes async generators from a different asyncio Task, which causes anyio's
+cancel-scope checks to fail. We work around this by running the SDK query in
+a separate thread with its own event loop, bridging events through a
+thread-safe queue.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
+import queue
 import sys
+import threading
 from typing import AsyncIterator
 
 from knowl.llm.claude import (
@@ -21,6 +30,8 @@ from knowl.log import get_logger
 
 logger = get_logger(__name__)
 
+_SENTINEL = object()
+
 
 def _get_mcp_server_config(project: str | None) -> dict:
     """Build the MCP server config dict for claude_agent_sdk."""
@@ -33,7 +44,6 @@ def _get_mcp_server_config(project: str | None) -> dict:
         "args": args,
     }
 
-    # Pass KNOWL_DIR if set
     knowl_dir = os.environ.get("KNOWL_DIR")
     if knowl_dir:
         config["env"] = {"KNOWL_DIR": knowl_dir}
@@ -41,9 +51,79 @@ def _get_mcp_server_config(project: str | None) -> dict:
     return config
 
 
+def _sdk_env() -> dict[str, str]:
+    """Build env overrides for the Agent SDK subprocess.
+
+    The SDK merges os.environ with options.env (options wins), so we
+    explicitly blank out vars we want removed:
+    - CLAUDECODE / CLAUDE_CODE_ENTRYPOINT: prevents nested session error
+    - ANTHROPIC_API_KEY: forces Claude Code to use the subscription token
+      set via `claude setup-token` instead of the API key
+    """
+    return {
+        "CLAUDECODE": "",
+        "CLAUDE_CODE_ENTRYPOINT": "",
+        "ANTHROPIC_API_KEY": "",
+    }
+
+
+def _run_sdk_in_thread(
+    full_prompt: str,
+    options,
+    q: queue.Queue,
+):
+    """Run the Agent SDK query in a dedicated thread with its own event loop.
+
+    This isolates anyio's cancel scopes from FastAPI's task scheduling.
+    """
+    async def _run():
+        from claude_agent_sdk import (
+            query,
+            ResultMessage,
+            AssistantMessage,
+            TextBlock,
+            ToolUseBlock,
+        )
+
+        full_text_parts: list[str] = []
+        try:
+            async for message in query(prompt=full_prompt, options=options):
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            full_text_parts.append(block.text)
+                            q.put(TextChunkEvent(text=block.text))
+                        elif isinstance(block, ToolUseBlock):
+                            q.put(ToolCallEvent(name=block.name, input=block.input))
+                elif isinstance(message, ResultMessage):
+                    if message.result and message.result not in full_text_parts:
+                        full_text_parts.append(message.result)
+                        q.put(TextChunkEvent(text=message.result))
+                    q.put(DoneEvent(full_text="".join(full_text_parts)))
+                    return
+
+            q.put(DoneEvent(full_text="".join(full_text_parts)))
+        except Exception as exc:
+            logger.error("CLI backend error: %s", exc)
+            q.put(exc)
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_run())
+    except Exception as exc:
+        import traceback
+        tb = traceback.format_exc()
+        logger.error("CLI backend thread error: %s\n%s", exc, tb)
+        q.put(exc)
+    finally:
+        loop.close()
+        logger.info("CLI backend thread finished")
+        q.put(_SENTINEL)
+
+
 async def stream_message_with_tools(
     user_message: str,
-    tool_executor=None,  # Ignored — MCP server handles tool execution
+    tool_executor=None,
     context: list[dict[str, str]] | None = None,
     history: list[dict[str, str]] | None = None,
     model: str = "claude-sonnet-4-6",
@@ -51,24 +131,9 @@ async def stream_message_with_tools(
     project: str | None = None,
     attachments: list[dict] | None = None,
 ) -> AsyncIterator[StreamEvent]:
-    """Stream a Claude response via the Agent SDK with Knowl MCP tools.
-
-    Same interface as claude.stream_message_with_tools() — yields
-    TextChunkEvent, ToolCallEvent, and DoneEvent.
-
-    Key difference: Claude Agent SDK controls the tool loop. We observe
-    tool calls for UI rendering but don't execute them — the MCP server
-    handles execution when Claude calls it.
-    """
+    """Stream a Claude response via the Agent SDK with Knowl MCP tools."""
     try:
-        from claude_agent_sdk import (
-            query,
-            ClaudeAgentOptions,
-            ResultMessage,
-            AssistantMessage,
-            TextBlock,
-            ToolUseBlock,
-        )
+        from claude_agent_sdk import ClaudeAgentOptions
     except ImportError as exc:
         raise RuntimeError(
             "The 'claude-agent-sdk' package is not installed. "
@@ -77,7 +142,6 @@ async def stream_message_with_tools(
 
     system_prompt = format_system_prompt(context or [])
 
-    # Build the prompt — include history context if present
     prompt_parts = []
     if history:
         prompt_parts.append("Previous conversation:")
@@ -89,14 +153,12 @@ async def stream_message_with_tools(
         prompt_parts.append("")
     prompt_parts.append(user_message)
 
-    # Add attachment descriptions (CLI mode supports text attachments initially)
     if attachments:
         for att in attachments:
             if att.get("type") == "text":
                 prompt_parts.append(att.get("text", ""))
 
     full_prompt = "\n".join(prompt_parts)
-
     mcp_config = _get_mcp_server_config(project)
 
     options = ClaudeAgentOptions(
@@ -105,32 +167,32 @@ async def stream_message_with_tools(
         mcp_servers={"knowl": mcp_config},
         allowed_tools=["mcp__knowl__*"],
         max_turns=20,
+        env=_sdk_env(),
     )
 
-    full_text_parts: list[str] = []
+    # Thread-safe queue bridges the SDK thread and FastAPI's async generator
+    q: queue.Queue = queue.Queue()
 
+    thread = threading.Thread(
+        target=_run_sdk_in_thread,
+        args=(full_prompt, options, q),
+        daemon=True,
+    )
+    thread.start()
+
+    loop = asyncio.get_event_loop()
     try:
-        async for message in query(prompt=full_prompt, options=options):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        full_text_parts.append(block.text)
-                        yield TextChunkEvent(text=block.text)
-                    elif isinstance(block, ToolUseBlock):
-                        yield ToolCallEvent(name=block.name, input=block.input)
-            elif isinstance(message, ResultMessage):
-                if message.result and message.result not in full_text_parts:
-                    full_text_parts.append(message.result)
-                    yield TextChunkEvent(text=message.result)
-                yield DoneEvent(full_text="".join(full_text_parts))
-                return
-
-        # If we exit the loop without a ResultMessage, still emit DoneEvent
-        yield DoneEvent(full_text="".join(full_text_parts))
-
-    except Exception as exc:
-        logger.error("CLI backend error: %s", exc)
-        raise RuntimeError(f"Claude Agent SDK error: {exc}") from exc
+        while True:
+            # Poll the thread-safe queue without blocking the event loop
+            item = await loop.run_in_executor(None, q.get)
+            if item is _SENTINEL:
+                break
+            if isinstance(item, Exception):
+                raise RuntimeError(f"Claude Agent SDK error: {item}") from item
+            yield item
+    finally:
+        # Thread is daemon — will be cleaned up when process exits
+        pass
 
 
 async def format_with_cli(prompt: str, model: str = "claude-sonnet-4-6") -> str:
@@ -146,8 +208,10 @@ async def format_with_cli(prompt: str, model: str = "claude-sonnet-4-6") -> str:
     except ImportError as exc:
         raise RuntimeError("claude-agent-sdk not installed") from exc
 
-    options = ClaudeAgentOptions(model=model, max_turns=1, allowed_tools=[])
+    options = ClaudeAgentOptions(model=model, max_turns=1, allowed_tools=[], env=_sdk_env())
     parts: list[str] = []
+    # format_with_cli is called directly (not from StreamingResponse), so
+    # the anyio scope issue doesn't apply here.
     async for message in query(prompt=prompt, options=options):
         if isinstance(message, AssistantMessage):
             for block in message.content:
