@@ -201,6 +201,11 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
     }
   };
 
+  const autoGrow = (el: HTMLTextAreaElement) => {
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 200) + "px";
+  };
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(true);
@@ -317,32 +322,7 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
         <div ref={messagesEndRef} />
       </div>
 
-      {files.length > 0 && (
-        <div className="file-chips">
-          {files.map((f, i) => {
-            const preview = getFilePreview(f);
-            return (
-              <div key={`${f.name}-${i}`} className="file-chip">
-                {preview ? (
-                  <img src={preview} alt={f.name} className="file-chip-img" />
-                ) : (
-                  <span className="file-chip-icon">&#128196;</span>
-                )}
-                <span className="file-chip-name">{f.name}</span>
-                <button
-                  className="file-chip-remove"
-                  onClick={() => removeFile(i)}
-                  title="Remove file"
-                >
-                  &times;
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="chat-input-area">
+      <div className="composer">
         <input
           ref={fileInputRef}
           type="file"
@@ -354,33 +334,89 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
             e.target.value = "";
           }}
         />
-        <button
-          className="file-attach-btn"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={streaming}
-          title="Attach files"
-        >
-          &#128206;
-        </button>
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
-          disabled={streaming}
-          rows={2}
-        />
-        <VoiceMicButton
-          onTranscript={(text) => setInput((prev) => prev + text)}
-          disabled={streaming}
-        />
-        <button
-          className="btn btn-primary"
-          onClick={handleSend}
-          disabled={streaming || !input.trim()}
-        >
-          {streaming ? "..." : "Send"}
-        </button>
+
+        {files.length > 0 && (
+          <div className="composer-files">
+            {files.map((f, i) => {
+              const preview = getFilePreview(f);
+              return (
+                <div key={`${f.name}-${i}`} className="composer-file-chip">
+                  {preview ? (
+                    <img src={preview} alt={f.name} className="composer-file-thumb" />
+                  ) : (
+                    <svg className="composer-file-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                      <path d="M4 1h5.586a1 1 0 0 1 .707.293l2.414 2.414a1 1 0 0 1 .293.707V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zm5 1H4v12h8V5h-2a1 1 0 0 1-1-1V2z"/>
+                    </svg>
+                  )}
+                  <span className="composer-file-name">{f.name}</span>
+                  <button
+                    className="composer-file-remove"
+                    onClick={() => removeFile(i)}
+                    title="Remove"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                      <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
+                    </svg>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="composer-row">
+          <div className="composer-actions-left">
+            <button
+              className="composer-btn"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={streaming}
+              title="Attach files"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+              </svg>
+            </button>
+          </div>
+
+          <textarea
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              autoGrow(e.target);
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder={streaming ? "Waiting for response..." : "Message Knowl..."}
+            disabled={streaming}
+            rows={1}
+          />
+
+          <div className="composer-actions-right">
+            <VoiceMicButton
+              onTranscript={(text) => setInput((prev) => prev + text)}
+              disabled={streaming}
+            />
+            <button
+              className={`composer-send ${input.trim() && !streaming ? "ready" : ""}`}
+              onClick={handleSend}
+              disabled={streaming || !input.trim()}
+              title="Send message"
+            >
+              {streaming ? (
+                <svg className="composer-spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M12 2v4m0 12v4m-7.07-3.93l2.83-2.83m8.48-8.48l2.83-2.83M2 12h4m12 0h4m-3.93 7.07l-2.83-2.83M7.76 7.76L4.93 4.93"/>
+                </svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M3.478 2.405a.75.75 0 0 0-.926.94l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.405z"/>
+                </svg>
+              )}
+            </button>
+          </div>
+        </div>
+
+        <div className="composer-hint">
+          <span>Enter to send, Shift+Enter for newline</span>
+        </div>
       </div>
     </div>
   );
