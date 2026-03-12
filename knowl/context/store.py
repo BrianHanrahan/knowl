@@ -55,10 +55,22 @@ def set_knowl_dir(path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def _validate_path(path: Path) -> Path:
-    """Resolve path and verify it's under KNOWL_DIR."""
+    """Resolve path and verify it's under KNOWL_DIR (follows symlinks)."""
     resolved = path.resolve()
+    # Resolve KNOWL_DIR and GLOBAL_DIR separately — GLOBAL_DIR may be a
+    # symlink to an external directory (e.g. ~/Documents/claude-context/context).
     knowl_resolved = KNOWL_DIR.resolve()
-    if not str(resolved).startswith(str(knowl_resolved) + os.sep) and resolved != knowl_resolved:
+    global_resolved = GLOBAL_DIR.resolve()
+
+    under_knowl = (
+        str(resolved).startswith(str(knowl_resolved) + os.sep)
+        or resolved == knowl_resolved
+    )
+    under_global = (
+        str(resolved).startswith(str(global_resolved) + os.sep)
+        or resolved == global_resolved
+    )
+    if not under_knowl and not under_global:
         raise ValueError(f"Path {path} escapes allowed directory {KNOWL_DIR}")
     return resolved
 

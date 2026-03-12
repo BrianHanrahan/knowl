@@ -45,6 +45,7 @@ do_start() {
     fi
 
     echo "Starting Knowl server on http://localhost:$PORT ..."
+    export PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}"
     nohup "$VENV/bin/python" -c "
 import uvicorn
 from knowl.ui.server import create_app

@@ -153,10 +153,46 @@ async def stream_message_with_tools(
         prompt_parts.append("")
     prompt_parts.append(user_message)
 
+    # Handle attachments — CLI backend can't send image content blocks via
+    # the Agent SDK's string prompt, so save images/PDFs to temp files and
+    # tell the agent to use the Read tool to view them.
     if attachments:
+        import base64 as _b64
+        import tempfile
+
         for att in attachments:
             if att.get("type") == "text":
                 prompt_parts.append(att.get("text", ""))
+            elif att.get("type") == "image":
+                source = att.get("source", {})
+                if source.get("type") == "base64":
+                    img_data = _b64.b64decode(source["data"])
+                    ext = {
+                        "image/png": ".png", "image/jpeg": ".jpg",
+                        "image/gif": ".gif", "image/webp": ".webp",
+                    }.get(source.get("media_type", ""), ".png")
+                    tmp = tempfile.NamedTemporaryFile(
+                        suffix=ext, prefix="knowl_upload_", delete=False
+                    )
+                    tmp.write(img_data)
+                    tmp.close()
+                    prompt_parts.append(
+                        f"\n[Attached image saved at: {tmp.name} — "
+                        f"use the Read tool to view it]"
+                    )
+            elif att.get("type") == "document":
+                source = att.get("source", {})
+                if source.get("type") == "base64":
+                    doc_data = _b64.b64decode(source["data"])
+                    tmp = tempfile.NamedTemporaryFile(
+                        suffix=".pdf", prefix="knowl_upload_", delete=False
+                    )
+                    tmp.write(doc_data)
+                    tmp.close()
+                    prompt_parts.append(
+                        f"\n[Attached PDF saved at: {tmp.name} — "
+                        f"use the Read tool to view it]"
+                    )
 
     full_prompt = "\n".join(prompt_parts)
     mcp_config = _get_mcp_server_config(project)
@@ -165,7 +201,7 @@ async def stream_message_with_tools(
         system_prompt=system_prompt if system_prompt else None,
         model=model,
         mcp_servers={"knowl": mcp_config},
-        allowed_tools=["mcp__knowl__*"],
+        allowed_tools=["mcp__knowl__*", "Read"],
         max_turns=20,
         env=_sdk_env(),
     )
