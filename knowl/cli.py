@@ -148,6 +148,24 @@ def cmd_context_delete(args: argparse.Namespace) -> None:
         print("Cancelled.")
 
 
+def cmd_context_rename(args: argparse.Namespace) -> None:
+    path = store.GLOBAL_DIR / args.file
+    if not path.exists():
+        config = store.load_config()
+        project = config.get("active_project")
+        if project:
+            path = store.PROJECTS_DIR / project / args.file
+    if not path.exists():
+        print(f"File not found: {args.file}")
+        sys.exit(1)
+    new_path = path.parent / args.new_name
+    if new_path.exists():
+        print(f"A file named {args.new_name} already exists.")
+        sys.exit(1)
+    store.rename_context_file(path, new_path)
+    print(f"Renamed {args.file} → {args.new_name}")
+
+
 def cmd_context_promote(args: argparse.Namespace) -> None:
     project = args.project
     if not project:
@@ -731,6 +749,10 @@ def main() -> None:
     del_p = context_sub.add_parser("delete", help="Delete a context file")
     del_p.add_argument("file", help="Filename to delete")
 
+    ren_p = context_sub.add_parser("rename", help="Rename a context file")
+    ren_p.add_argument("file", help="Current filename")
+    ren_p.add_argument("new_name", help="New filename")
+
     prom_p = context_sub.add_parser("promote", help="Promote a project file to global")
     prom_p.add_argument("file", help="Filename to promote")
     prom_p.add_argument("--from", dest="project", default=None, help="Source project")
@@ -816,6 +838,8 @@ def main() -> None:
             cmd_context_show(args)
         elif args.context_command == "delete":
             cmd_context_delete(args)
+        elif args.context_command == "rename":
+            cmd_context_rename(args)
         elif args.context_command == "promote":
             cmd_context_promote(args)
         elif args.context_command == "inspect":

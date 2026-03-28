@@ -220,7 +220,7 @@ def delete_context_file(path: str | Path) -> bool:
 
 
 def rename_context_file(old_path: str | Path, new_path: str | Path) -> Path:
-    """Rename a context file."""
+    """Rename a context file and update active_files / index accordingly."""
     old_path = Path(old_path)
     new_path = Path(new_path)
     _validate_path(old_path)
@@ -228,6 +228,29 @@ def rename_context_file(old_path: str | Path, new_path: str | Path) -> Path:
     if not old_path.exists():
         raise FileNotFoundError(f"Source file does not exist: {old_path}")
     old_path.rename(new_path)
+
+    # Update active_files in context.json if this is a project file
+    old_name = old_path.name
+    new_name = new_path.name
+    parent = new_path.parent
+    context_json = parent / "context.json"
+    if context_json.exists():
+        try:
+            data = json.loads(context_json.read_text(encoding="utf-8"))
+            active = data.get("active_files", [])
+            if old_name in active:
+                data["active_files"] = [new_name if f == old_name else f for f in active]
+                context_json.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to update context.json after rename: %s", exc)
+
+    # Update index
+    if parent == GLOBAL_DIR:
+        update_index_entry("global", None, new_name)
+    else:
+        project_name = parent.name
+        update_index_entry("project", project_name, new_name)
+
     return new_path
 
 
