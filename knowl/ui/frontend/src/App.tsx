@@ -65,6 +65,24 @@ export default function App() {
     refresh();
   };
 
+  // Escape key returns to chat from any non-chat view
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && view !== "chat") {
+        // Don't override Escape if user is typing in an input/textarea
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
+        if (view === "editor") {
+          handleEditorClose();
+        } else {
+          setView("chat");
+        }
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [view]);
+
   return (
     <div className="app">
       <header className="app-header">
@@ -104,9 +122,8 @@ export default function App() {
           )}
         </aside>
 
-          {/* Token budget tracking moved to ChatView context tracker */}
-
-          <div className="sidebar-actions">
+        <main className="main-panel">
+          <nav className="view-tabs">
             <button
               className={`view-tab ${view === "chat" ? "view-tab-active" : ""}`}
               onClick={() => setView("chat")}

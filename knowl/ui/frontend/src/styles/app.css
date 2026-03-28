@@ -84,11 +84,7 @@ body {
   gap: 12px;
 }
 
-.sidebar-actions {
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-  display: none;
-}
+/* sidebar-actions removed — view tabs now live in main-panel */
 
 /* ── Main Panel ──────────────────────────────────────────────────── */
 
