@@ -2,12 +2,14 @@ import { useState, useEffect, useCallback } from "react";
 import * as api from "./api";
 import ProjectSelector from "./components/ProjectSelector";
 import ContextPanel from "./components/ContextPanel";
-import TokenBudget from "./components/TokenBudget";
+// TokenBudget removed — context tracking moved to ChatView
 import ChatView from "./components/ChatView";
+import ToolsPanel from "./components/ToolsPanel";
 import ContextEditor from "./components/ContextEditor";
 import ContextInspect from "./components/ContextInspect";
+import SettingsPanel from "./components/SettingsPanel";
 
-type View = "chat" | "editor" | "inspect";
+type View = "chat" | "editor" | "inspect" | "settings";
 
 export default function App() {
   const [projects, setProjects] = useState<string[]>([]);
@@ -43,6 +45,15 @@ export default function App() {
     await handleSwitchProject(name);
   };
 
+  const handleDeleteProject = async (name: string) => {
+    await api.deleteProject(name);
+    const data = await api.getProjects();
+    setProjects(data.projects);
+    if (activeProject === name) {
+      await handleSwitchProject(null);
+    }
+  };
+
   const handleFileClick = (path: string) => {
     setEditingFile(path);
     setView("editor");
@@ -63,8 +74,16 @@ export default function App() {
           active={activeProject}
           onSwitch={handleSwitchProject}
           onCreate={handleCreateProject}
+          onDelete={handleDeleteProject}
         />
         <span className="model-badge">{model}</span>
+        <button
+          className={`btn btn-sm btn-icon ${view === "settings" ? "btn-active" : ""}`}
+          onClick={() => setView(view === "settings" ? "chat" : "settings")}
+          title="Settings"
+        >
+          &#9881;
+        </button>
       </header>
 
       <div className="app-body">
@@ -77,12 +96,17 @@ export default function App() {
           />
 
           {activeProject && (
-            <TokenBudget project={activeProject} refreshKey={refreshKey} />
+            <ToolsPanel
+              project={activeProject}
+              refreshKey={refreshKey}
+              onRefresh={refresh}
+            />
           )}
         </aside>
 
-        <main className="main-panel">
-          <nav className="view-tabs">
+          {/* Token budget tracking moved to ChatView context tracker */}
+
+          <div className="sidebar-actions">
             <button
               className={`view-tab ${view === "chat" ? "view-tab-active" : ""}`}
               onClick={() => setView("chat")}
@@ -115,13 +139,16 @@ export default function App() {
           </nav>
 
           <div style={{ display: view === "chat" ? "contents" : "none" }}>
-            <ChatView project={activeProject} refreshKey={refreshKey} />
+            <ChatView project={activeProject} refreshKey={refreshKey} onRefresh={refresh} />
           </div>
           {view === "editor" && editingFile && (
             <ContextEditor filePath={editingFile} onClose={handleEditorClose} />
           )}
           {view === "inspect" && (
             <ContextInspect project={activeProject} />
+          )}
+          {view === "settings" && (
+            <SettingsPanel onClose={() => setView("chat")} />
           )}
         </main>
       </div>

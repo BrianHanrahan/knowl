@@ -1,6 +1,7 @@
 {
   "llm": {
-    "model": "claude-sonnet-4-6"
+    "model": "claude-sonnet-4-6",
+    "backend": "cli"
   },
   "voice": {
     "whisper_model": "base",

@@ -2,13 +2,17 @@
 
 
 import asyncio
+import functools
 import json
 import os
 from pathlib import Path
 from typing import Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import Body, FastAPI, HTTPException, Query, Request
+import base64
+import mimetypes
+
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,7 +20,7 @@ from pydantic import BaseModel
 
 from knowl.context import store
 from knowl.llm import claude
-from knowl.llm.claude import TextChunkEvent, ToolCallEvent, DoneEvent
+from knowl.llm.claude import TextChunkEvent, ToolCallEvent, ToolResultEvent, DoneEvent
 
 
 # ── Pydantic request models (must be at module level for FastAPI) ────
@@ -27,6 +31,7 @@ class CreateProject(BaseModel):
 class UpdateConfig(BaseModel):
     active_project: Optional[str] = None
     model: Optional[str] = None
+    backend: Optional[str] = None  # "api" or "cli"
 
 class WriteFile(BaseModel):
     path: str
@@ -47,6 +52,13 @@ class PromoteFile(BaseModel):
 class RenameFile(BaseModel):
     path: str
     new_name: str
+
+class MoveFile(BaseModel):
+    filename: str
+    from_scope: str  # "global" or "project"
+    to_scope: str    # "global" or "project"
+    from_project: Optional[str] = None
+    to_project: Optional[str] = None
 
 class FormatFile(BaseModel):
     content: str
@@ -100,6 +112,8 @@ def create_app(dev: bool = False) -> FastAPI:
     _register_context_routes(app)
     _register_inspect_routes(app)
     _register_chat_routes(app)
+    _register_tool_routes(app)
+    _register_upload_routes(app)
     _register_promotion_routes(app)
 
     # Serve React build in production
@@ -166,8 +180,32 @@ def _register_config_routes(app: FastAPI) -> None:
             config["active_project"] = payload.active_project or None
         if payload.model is not None:
             config.setdefault("llm", {})["model"] = payload.model
+        if payload.backend is not None:
+            if payload.backend not in ("api", "cli"):
+                raise HTTPException(status_code=400, detail="backend must be 'api' or 'cli'")
+            config.setdefault("llm", {})["backend"] = payload.backend
         store.save_config(config)
         return config
+
+    @app.get("/api/config/backend")
+    async def get_backend():
+        config = store.load_config()
+        backend = config.get("llm", {}).get("backend", "api")
+        has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+        return {"backend": backend, "has_api_key": has_api_key}
+
+
+# ── Backend routing ───────────────────────────────────────────────────
+
+def _get_stream_fn(config: dict):
+    """Return the appropriate stream_message_with_tools based on backend config."""
+    backend = config.get("llm", {}).get("backend", "api")
+    if backend == "cli":
+        from knowl.llm.cli_backend import stream_message_with_tools
+        return stream_message_with_tools
+    else:
+        from knowl.llm.claude import stream_message_with_tools
+        return stream_message_with_tools
 
 
 # ── Context file routes ──────────────────────────────────────────────
@@ -177,8 +215,19 @@ def _register_context_routes(app: FastAPI) -> None:
     @app.get("/api/context/global")
     async def list_global_files():
         files = store.list_global_files()
+        # Load summaries from index for UI display
+        try:
+            index = json.loads(store.INDEX_PATH.read_text(encoding="utf-8")) if store.INDEX_PATH.exists() else {}
+        except (json.JSONDecodeError, OSError):
+            index = {}
+        summaries = {e["file"]: e.get("summary", "") for e in index.get("global", [])}
         return [
-            {"name": f.name, "tokens": store.estimate_file_tokens(f), "path": str(f)}
+            {
+                "name": f.name,
+                "tokens": store.estimate_file_tokens(f),
+                "path": str(f),
+                "summary": summaries.get(f.name, ""),
+            }
             for f in files
         ]
 
@@ -186,12 +235,19 @@ def _register_context_routes(app: FastAPI) -> None:
     async def list_project_files(name: str):
         files = store.list_project_files(name)
         active_paths = {str(f) for f in store.list_active_files(name)}
+        # Load summaries from index
+        try:
+            index = json.loads(store.INDEX_PATH.read_text(encoding="utf-8")) if store.INDEX_PATH.exists() else {}
+        except (json.JSONDecodeError, OSError):
+            index = {}
+        summaries = {e["file"]: e.get("summary", "") for e in index.get("projects", {}).get(name, [])}
         return [
             {
                 "name": f.name,
                 "tokens": store.estimate_file_tokens(f),
                 "path": str(f),
                 "active": str(f) in active_paths,
+                "summary": summaries.get(f.name, ""),
             }
             for f in files
         ]
@@ -203,12 +259,27 @@ def _register_context_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=404, detail="File not found")
         return {"path": path, "content": content}
 
+    def _update_index_for_path(file_path: str) -> None:
+        """Update the index entry for a file based on its location."""
+        p = Path(file_path)
+        resolved_global = store.GLOBAL_DIR.resolve()
+        resolved_projects = store.PROJECTS_DIR.resolve()
+        resolved_p = p.resolve()
+        if str(resolved_p).startswith(str(resolved_global)):
+            store.update_index_entry("global", None, p.name)
+        elif str(resolved_p).startswith(str(resolved_projects)):
+            # Extract project name from path: PROJECTS_DIR / project / file.md
+            rel = resolved_p.relative_to(resolved_projects)
+            if len(rel.parts) >= 2:
+                store.update_index_entry("project", rel.parts[0], rel.parts[1])
+
     @app.put("/api/context/file")
     async def write_file(payload: WriteFile):
         try:
             store.write_context_file(payload.path, payload.content)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        _update_index_for_path(payload.path)
         return {"path": payload.path, "tokens": store.estimate_tokens(payload.content)}
 
     @app.post("/api/context/file")
@@ -224,6 +295,7 @@ def _register_context_routes(app: FastAPI) -> None:
             store.write_context_file(target, content)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        _update_index_for_path(str(target))
         return {"path": str(target), "tokens": store.estimate_tokens(content)}
 
     @app.delete("/api/context/file")
@@ -231,6 +303,7 @@ def _register_context_routes(app: FastAPI) -> None:
         ok = store.delete_context_file(path)
         if not ok:
             raise HTTPException(status_code=404, detail="File not found")
+        _update_index_for_path(path)
         return {"deleted": path}
 
     @app.put("/api/context/active/{project}")
@@ -244,6 +317,8 @@ def _register_context_routes(app: FastAPI) -> None:
         new_path = old.parent / payload.new_name
         try:
             result = store.rename_context_file(old, new_path)
+            _update_index_for_path(payload.path)  # remove old entry
+            _update_index_for_path(str(result))    # add new entry
             return {"old_path": payload.path, "new_path": str(result)}
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="File not found")
@@ -254,6 +329,7 @@ def _register_context_routes(app: FastAPI) -> None:
     async def format_file(payload: FormatFile):
         config = store.load_config()
         model = payload.model or config.get("llm", {}).get("model", "claude-sonnet-4-6")
+        backend = config.get("llm", {}).get("backend", "api")
         prompt = (
             "Clean up the following markdown content. Fix markdown formatting "
             "(especially tables — ensure proper | pipe | syntax), remove duplicate "
@@ -263,11 +339,15 @@ def _register_context_routes(app: FastAPI) -> None:
             + payload.content
         )
         try:
-            result = await asyncio.to_thread(
-                claude.send_message,
-                user_message=prompt,
-                model=model,
-            )
+            if backend == "cli":
+                from knowl.llm.cli_backend import format_with_cli
+                result = await format_with_cli(prompt, model)
+            else:
+                result = await asyncio.to_thread(
+                    claude.send_message,
+                    user_message=prompt,
+                    model=model,
+                )
             return {"content": result}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
@@ -278,6 +358,24 @@ def _register_context_routes(app: FastAPI) -> None:
         if not result:
             raise HTTPException(status_code=404, detail="File not found in project")
         return {"promoted": payload.filename, "path": str(result)}
+
+    @app.post("/api/context/move")
+    async def move_file(payload: MoveFile):
+        try:
+            dest = store.move_context_file(
+                filename=payload.filename,
+                from_scope=payload.from_scope,
+                to_scope=payload.to_scope,
+                from_project=payload.from_project,
+                to_project=payload.to_project,
+            )
+            return {"filename": payload.filename, "destination": str(dest)}
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Source file not found")
+        except FileExistsError:
+            raise HTTPException(status_code=409, detail="File already exists at destination")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
 
 # ── Inspect routes ───────────────────────────────────────────────────
@@ -332,7 +430,7 @@ def _register_chat_routes(app: FastAPI) -> None:
         store.clear_history(project)
         return {"cleared": True, "project": project}
 
-    async def execute_tool(name: str, input_data: dict) -> str:
+    async def execute_tool(name: str, input_data: dict, project: Optional[str] = None) -> str:
         """Dispatch a tool call to the appropriate implementation."""
         # Web tools
         if name == "web_search":
@@ -350,14 +448,36 @@ def _register_chat_routes(app: FastAPI) -> None:
         # Context tools
         elif name == "list_context_files":
             project_name = input_data.get("project")
+            # Load index for summaries so the LLM can pick files intelligently
+            try:
+                index = json.loads(store.INDEX_PATH.read_text(encoding="utf-8")) if store.INDEX_PATH.exists() else {}
+            except (json.JSONDecodeError, OSError):
+                index = {}
+            global_summaries = {e["file"]: e.get("summary", "") for e in index.get("global", [])}
             global_files = [
-                {"name": f.name, "tokens": store.estimate_file_tokens(f), "path": str(f), "scope": "global"}
+                {
+                    "name": f.name,
+                    "tokens": store.estimate_file_tokens(f),
+                    "path": str(f),
+                    "scope": "global",
+                    "summary": global_summaries.get(f.name, ""),
+                }
                 for f in store.list_global_files()
             ]
             project_files = []
             if project_name:
+                proj_summaries = {
+                    e["file"]: e.get("summary", "")
+                    for e in index.get("projects", {}).get(project_name, [])
+                }
                 project_files = [
-                    {"name": f.name, "tokens": store.estimate_file_tokens(f), "path": str(f), "scope": project_name}
+                    {
+                        "name": f.name,
+                        "tokens": store.estimate_file_tokens(f),
+                        "path": str(f),
+                        "scope": project_name,
+                        "summary": proj_summaries.get(f.name, ""),
+                    }
                     for f in store.list_project_files(project_name)
                 ]
             projects = store.list_projects()
@@ -370,7 +490,8 @@ def _register_chat_routes(app: FastAPI) -> None:
             content = store.read_context_file(rpath)
             if content is None:
                 return json.dumps({"error": f"File not found: {rpath}"})
-            return json.dumps({"path": rpath, "content": content})
+            tokens = store.estimate_tokens(content)
+            return json.dumps({"path": rpath, "content": content, "tokens": tokens})
 
         elif name == "write_context_file":
             content = input_data["content"]
@@ -403,10 +524,82 @@ def _register_chat_routes(app: FastAPI) -> None:
             ok = store.delete_context_file(dpath)
             if not ok:
                 return json.dumps({"error": f"File not found: {dpath}"})
+            _update_index_for_path(dpath)
             return json.dumps({"success": True, "deleted": dpath})
 
+        elif name == "move_context_file":
+            try:
+                dest = store.move_context_file(
+                    filename=input_data["filename"],
+                    from_scope=input_data["from_scope"],
+                    to_scope=input_data["to_scope"],
+                    from_project=input_data.get("from_project"),
+                    to_project=input_data.get("to_project"),
+                )
+                return json.dumps({"success": True, "destination": str(dest)})
+            except FileNotFoundError as exc:
+                return json.dumps({"error": str(exc)})
+            except FileExistsError as exc:
+                return json.dumps({"error": str(exc)})
+            except ValueError as exc:
+                return json.dumps({"error": str(exc)})
+
+        # Meta-tool: create a new custom tool
+        elif name == "create_tool":
+            if not project:
+                return json.dumps({"error": "Cannot create tools without an active project."})
+            from datetime import datetime, timezone
+            tool_data = {
+                "name": input_data["name"],
+                "description": input_data["description"],
+                "input_schema": input_data["input_schema"],
+                "implementation": input_data["implementation"],
+                "status": "pending",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "version": 1,
+            }
+            store.save_tool(project, tool_data)
+            return json.dumps({
+                "success": True,
+                "message": (
+                    f"Tool '{input_data['name']}' has been proposed and is awaiting user approval. "
+                    f"IMPORTANT: You CANNOT call this tool yet. The user must approve it first via the UI. "
+                    f"Do NOT attempt to call '{input_data['name']}' — it will fail until approved. "
+                    f"Tell the user the tool has been proposed and they can approve it in the sidebar or inline."
+                ),
+                "status": "pending",
+            })
+
         else:
-            available = "web_search, fetch_page, list_context_files, read_context_file, write_context_file, delete_context_file"
+            # Check if this is a custom tool
+            if project:
+                tool = store.get_tool(project, name)
+                if tool:
+                    status = tool.get("status")
+                    if status == "approved":
+                        from knowl.tools.executor import execute_custom_tool, ToolExecutionError
+                        try:
+                            result = await asyncio.to_thread(
+                                execute_custom_tool, project, name, input_data
+                            )
+                            return result
+                        except ToolExecutionError as exc:
+                            return json.dumps({"error": str(exc)})
+                    elif status == "pending":
+                        return json.dumps({
+                            "error": f"Tool '{name}' exists but is pending user approval. "
+                            f"Do NOT retry — wait for the user to approve it in the UI first."
+                        })
+                    elif status == "disabled":
+                        return json.dumps({
+                            "error": f"Tool '{name}' is currently disabled by the user."
+                        })
+                    else:
+                        return json.dumps({
+                            "error": f"Tool '{name}' has status '{status}' and cannot be used."
+                        })
+
+            available = "web_search, fetch_page, list_context_files, read_context_file, write_context_file, delete_context_file, move_context_file, create_tool"
             return json.dumps({
                 "error": f"Unknown tool: {name}. Available tools: {available}"
             })
@@ -420,21 +613,32 @@ def _register_chat_routes(app: FastAPI) -> None:
         context_pieces = store.assemble_context(project)
         history = store.load_history(project)
 
+        context_sources = [{"source": p["source"], "tokens": p.get("tokens", 0)} for p in context_pieces]
+
         async def event_stream():
+            yield f"data: {json.dumps({'type': 'context_sources', 'sources': context_sources})}\n\n"
             full_response = []
             try:
-                async for event in claude.stream_message_with_tools(
+                stream_fn = _get_stream_fn(config)
+                bound_executor = functools.partial(execute_tool, project=project)
+                async for event in stream_fn(
                     user_message=payload.message,
-                    tool_executor=execute_tool,
+                    tool_executor=bound_executor,
                     context=context_pieces,
                     history=history,
                     model=model,
+                    project=project,
                 ):
                     if isinstance(event, TextChunkEvent):
                         full_response.append(event.text)
                         yield f"data: {json.dumps({'type': 'chunk', 'text': event.text})}\n\n"
                     elif isinstance(event, ToolCallEvent):
-                        yield f"data: {json.dumps({'type': 'tool_call', 'name': event.name, 'input': event.input})}\n\n"
+                        if event.name == "create_tool":
+                            yield f"data: {json.dumps({'type': 'tool_proposal', 'tool': event.input})}\n\n"
+                        else:
+                            yield f"data: {json.dumps({'type': 'tool_call', 'name': event.name, 'input': event.input})}\n\n"
+                    elif isinstance(event, ToolResultEvent):
+                        yield f"data: {json.dumps({'type': 'context_loaded', 'path': event.path, 'tokens': event.tokens})}\n\n"
                     elif isinstance(event, DoneEvent):
                         response_text = event.full_text
                         try:
@@ -442,7 +646,7 @@ def _register_chat_routes(app: FastAPI) -> None:
                             history.append({"role": "assistant", "content": response_text})
                             store.save_history(project, history)
                         except Exception:
-                            pass  # Don't break stream over history save failure
+                            pass
                         yield f"data: {json.dumps({'type': 'done', 'full_text': response_text})}\n\n"
             except Exception as exc:
                 yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
@@ -452,6 +656,248 @@ def _register_chat_routes(app: FastAPI) -> None:
             media_type="text/event-stream",
             headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
         )
+
+    @app.post("/api/chat/upload")
+    async def chat_with_files(
+        message: str = Form(...),
+        project: Optional[str] = Form(None),
+        model: Optional[str] = Form(None),
+        files: list[UploadFile] = File(default=[]),
+    ):
+        if len(files) > 10:
+            raise HTTPException(status_code=400, detail="Maximum 10 files allowed")
+
+        config = store.load_config()
+        proj = project if project is not None else config.get("active_project")
+        mdl = model or config.get("llm", {}).get("model", "claude-sonnet-4-6")
+
+        # Build attachment content blocks
+        IMAGE_MIMES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+        TEXT_EXTENSIONS = {
+            ".txt", ".md", ".csv", ".json", ".xml", ".py", ".js", ".ts",
+            ".html", ".css", ".yaml", ".yml", ".toml", ".ini", ".cfg",
+            ".sh", ".bash", ".rb", ".go", ".rs", ".java", ".c", ".cpp",
+            ".h", ".hpp", ".sql", ".r", ".swift", ".kt", ".lua",
+        }
+
+        attachments: list[dict] = []
+        file_descriptions: list[str] = []
+
+        for f in files:
+            data = await f.read()
+            if len(data) > 20 * 1024 * 1024:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File '{f.filename}' exceeds 20MB limit",
+                )
+
+            mime = f.content_type or mimetypes.guess_type(f.filename or "")[0] or ""
+            ext = Path(f.filename or "").suffix.lower()
+
+            if mime in IMAGE_MIMES:
+                b64 = base64.standard_b64encode(data).decode("ascii")
+                attachments.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": mime,
+                        "data": b64,
+                    },
+                })
+                file_descriptions.append(f"[Image: {f.filename}]")
+            elif mime == "application/pdf":
+                b64 = base64.standard_b64encode(data).decode("ascii")
+                attachments.append({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": b64,
+                    },
+                })
+                file_descriptions.append(f"[PDF: {f.filename}]")
+            elif ext in TEXT_EXTENSIONS or mime.startswith("text/"):
+                try:
+                    text_content = data.decode("utf-8")
+                except UnicodeDecodeError:
+                    text_content = data.decode("latin-1")
+                attachments.append({
+                    "type": "text",
+                    "text": f"--- {f.filename} ---\n{text_content}",
+                })
+                file_descriptions.append(f"[File: {f.filename}]")
+            else:
+                # Treat unknown as text if small, else skip
+                if len(data) < 1024 * 1024:
+                    try:
+                        text_content = data.decode("utf-8")
+                        attachments.append({
+                            "type": "text",
+                            "text": f"--- {f.filename} ---\n{text_content}",
+                        })
+                        file_descriptions.append(f"[File: {f.filename}]")
+                    except UnicodeDecodeError:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Unsupported file type: {f.filename} ({mime})",
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unsupported file type: {f.filename} ({mime})",
+                    )
+
+        context_pieces = store.assemble_context(proj)
+        history = store.load_history(proj)
+
+        # For history, store text description instead of base64
+        history_content = message
+        if file_descriptions:
+            history_content = message + "\n\nAttachments: " + ", ".join(file_descriptions)
+
+        upload_context_sources = [{"source": p["source"], "tokens": p.get("tokens", 0)} for p in context_pieces]
+
+        async def event_stream():
+            yield f"data: {json.dumps({'type': 'context_sources', 'sources': upload_context_sources})}\n\n"
+            try:
+                stream_fn = _get_stream_fn(config)
+                bound_executor = functools.partial(execute_tool, project=proj)
+                async for event in stream_fn(
+                    user_message=message,
+                    tool_executor=bound_executor,
+                    context=context_pieces,
+                    history=history,
+                    model=mdl,
+                    project=proj,
+                    attachments=attachments if attachments else None,
+                ):
+                    if isinstance(event, TextChunkEvent):
+                        yield f"data: {json.dumps({'type': 'chunk', 'text': event.text})}\n\n"
+                    elif isinstance(event, ToolCallEvent):
+                        if event.name == "create_tool":
+                            yield f"data: {json.dumps({'type': 'tool_proposal', 'tool': event.input})}\n\n"
+                        else:
+                            yield f"data: {json.dumps({'type': 'tool_call', 'name': event.name, 'input': event.input})}\n\n"
+                    elif isinstance(event, ToolResultEvent):
+                        yield f"data: {json.dumps({'type': 'context_loaded', 'path': event.path, 'tokens': event.tokens})}\n\n"
+                    elif isinstance(event, DoneEvent):
+                        response_text = event.full_text
+                        try:
+                            history.append({"role": "user", "content": history_content})
+                            history.append({"role": "assistant", "content": response_text})
+                            store.save_history(proj, history)
+                        except Exception:
+                            pass
+                        yield f"data: {json.dumps({'type': 'done', 'full_text': response_text})}\n\n"
+            except Exception as exc:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+        )
+
+
+# ── Upload management routes ─────────────────────────────────────
+
+def _register_upload_routes(app: FastAPI) -> None:
+
+    @app.post("/api/uploads/{project}")
+    async def upload_file(project: str, file: UploadFile = File(...)):
+        if project not in store.list_projects():
+            raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+        data = await file.read()
+        try:
+            path = store.save_upload(project, file.filename or "unnamed", data)
+            return {"name": file.filename, "path": str(path), "size": len(data)}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/api/uploads/{project}")
+    async def list_uploads(project: str):
+        if project not in store.list_projects():
+            raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+        return store.list_uploads(project)
+
+    @app.delete("/api/uploads/{project}/{filename}")
+    async def delete_upload(project: str, filename: str):
+        ok = store.delete_upload(project, filename)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Upload not found")
+        return {"deleted": filename}
+
+
+# ── Tool management routes ───────────────────────────────────────────
+
+class ToolAction(BaseModel):
+    action: str  # "approve", "reject", "disable", "enable"
+
+def _register_tool_routes(app: FastAPI) -> None:
+
+    @app.get("/api/tools/{project}")
+    async def list_tools(project: str):
+        tools = store.load_tools(project)
+        return {"tools": list(tools.values())}
+
+    @app.put("/api/tools/{project}/{name}/approve")
+    async def approve_tool(project: str, name: str):
+        tool = store.get_tool(project, name)
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
+        if tool["status"] not in ("pending", "disabled"):
+            raise HTTPException(status_code=400, detail=f"Tool is {tool['status']}, cannot approve")
+        tool["status"] = "approved"
+        store.save_tool(project, tool)
+        # Write the executable script with HMAC auth
+        from knowl.tools.executor import write_tool_script
+        write_tool_script(project, tool)
+        return {"name": name, "status": "approved"}
+
+    @app.put("/api/tools/{project}/{name}/reject")
+    async def reject_tool(project: str, name: str):
+        tool = store.get_tool(project, name)
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
+        tool["status"] = "rejected"
+        store.save_tool(project, tool)
+        return {"name": name, "status": "rejected"}
+
+    @app.put("/api/tools/{project}/{name}/disable")
+    async def disable_tool(project: str, name: str):
+        tool = store.get_tool(project, name)
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
+        if tool["status"] != "approved":
+            raise HTTPException(status_code=400, detail=f"Tool is {tool['status']}, cannot disable")
+        tool["status"] = "disabled"
+        store.save_tool(project, tool)
+        return {"name": name, "status": "disabled"}
+
+    @app.put("/api/tools/{project}/{name}/enable")
+    async def enable_tool(project: str, name: str):
+        tool = store.get_tool(project, name)
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
+        if tool["status"] != "disabled":
+            raise HTTPException(status_code=400, detail=f"Tool is {tool['status']}, cannot enable")
+        tool["status"] = "approved"
+        store.save_tool(project, tool)
+        # Re-write script in case implementation changed
+        from knowl.tools.executor import write_tool_script
+        write_tool_script(project, tool)
+        return {"name": name, "status": "approved"}
+
+    @app.delete("/api/tools/{project}/{name}")
+    async def delete_tool_route(project: str, name: str):
+        ok = store.delete_tool(project, name)
+        if not ok:
+            raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
+        # Clean up script file if it exists
+        script_path = store.PROJECTS_DIR / project / "tools" / f"{name}.py"
+        if script_path.exists():
+            script_path.unlink()
+        return {"deleted": name}
 
 
 # ── Promotion routes ─────────────────────────────────────────────────

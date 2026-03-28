@@ -1,0 +1,14 @@
+[30023324ms] Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[30123732ms] Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[30126664ms] Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[30139959ms] Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[30147746ms] Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[30158105ms] Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[30214401ms] Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[30215351ms] Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[30220261ms] Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[30386546ms] Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[30394890ms] Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[30397080ms] Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[30407435ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:6060/api/tools/knowl/compound_interest_calculator/approve:0
+[30429471ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:6060/api/tools/knowl/compound_interest_calculator/approve:0

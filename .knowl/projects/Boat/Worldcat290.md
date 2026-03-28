@@ -37,9 +37,13 @@
 | Item | Details |
 | --- | --- |
 | **Refrigerator** | Vitrifrigo Drinks Series — [Vitrifrigo Boating Refrigerators](https://www.vitrifrigo.com/en_us/products/boating/fridges-and-freezers) |
-| **Hardtop Lights** | i2Systems Apeiron SDi TRI-LIGHT, three-color LED fixture — S/N: 38802 |
+| **Hardtop Lights** | i2Systems Apeiron SDi TRI-LIGHT, three-color LED fixture — S/N: 38802 ✅ Replaced |
 | **Starboard Nav Light (green)** | Attwood NV2012SSG-7 — World Cat #W7013318 |
 | **Port Nav Light (red)** | Attwood NV2012SSR-7 — World Cat #W7013317 |
+| **Spreader Lights** | Lumitec Caprera3 - White/Red Dimming, White Housing (×2) — AMG Marine Invoice #000075, Mar 2026 |
+| **Stereo** | Fusion MS-RA210 w/AM/FM/BT/SiriusXM - 2 Zones w/DSP — AMG Marine Invoice #000075, Mar 2026 |
+| **USB-C Socket** | Scanstrut Ventura Series Dual USB-C Socket — AMG Marine Invoice #000075, Mar 2026 |
+| **Wireless Phone Charger** | Scanstrut Active 15W Wireless Adjustable Phone Charging — AMG Marine Invoice #000075, Mar 2026 |
 
 ---
 
@@ -55,30 +59,32 @@
 | Steering leaks — replace cylinders & seals | ? | OR switch to digital system, joystick, autopilot, remote |  |
 | Swap DEC for DES on 2010 Yam F250XCA (6CHX1000214 / 6CGX1000646) | ? |  | \~$10K |
 | Replace rigging tubes |  |  |  |
-| Built-in horn | broken |  |  |
+| Built-in horn | Done ✅ | Replaced |  |
 
 ### 🟡 Should Items
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Canvas: Isinglass — 3 sides | WIP |  |
+| Canvas: Isinglass — 3 sides | done |  |
 | Canvas: cushions — numerous broken snaps, replace | WIP |  |
-| Canvas/cover: split into 2 sections (bow, cockpit & stern) | WIP |  |
+| Canvas/cover: split into 2 sections (bow, cockpit & stern) | done |  |
 | Canvas: bow insert platform cushion | WIP |  |
-| Refrigerator recharge |  |  |
-| Replace weak battery |  |  |
+| Refrigerator recharge | ?? |  |
+| Replace weak battery | WIP |  |
 
 ### 🟢 Could Items
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Front spreader light |  |  |
-| Stereo upgrade |  | Bluetooth! |
+| Front spreader light | done | Lumitec Caprera3 White/Red Dimming ×2 — $420 — AMG Marine |
+| Stereo upgrade | done | Fusion MS-RA210 AM/FM/BT/SiriusXM 2-Zone — $399.99 — AMG Marine |
+| USB-C socket | done | Scanstrut Ventura Dual USB-C — $50 — AMG Marine |
+| Wireless phone charger | done | Scanstrut Active 15W Wireless — $100 — AMG Marine |
 | Garmin radar |  | \~$5K |
 
 ### 🔵 Punchlist
 
-[table]
+\[table\]
 
 ---
 
