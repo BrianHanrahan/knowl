@@ -68,6 +68,7 @@ export interface ContextFile {
   tokens: number;
   path: string;
   active?: boolean;
+  summary?: string;
 }
 
 export const getGlobalFiles = () =>
@@ -127,6 +128,25 @@ export const renameFile = (path: string, newName: string) =>
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path, new_name: newName }),
+  });
+
+export const moveFile = (
+  filename: string,
+  fromScope: string,
+  toScope: string,
+  fromProject?: string,
+  toProject?: string
+) =>
+  request<{ filename: string; destination: string }>("/api/context/move", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filename,
+      from_scope: fromScope,
+      to_scope: toScope,
+      from_project: fromProject,
+      to_project: toProject,
+    }),
   });
 
 // ── Format ──────────────────────────────────────────────────────────
@@ -189,6 +209,8 @@ export function streamChat(
     onError: (error: string) => void;
     onToolCall?: (name: string, input: Record<string, unknown>) => void;
     onToolProposal?: (tool: Record<string, unknown>) => void;
+    onContextSources?: (sources: { source: string; tokens: number }[]) => void;
+    onContextLoaded?: (path: string, tokens: number) => void;
   },
   project?: string,
   model?: string
@@ -229,12 +251,16 @@ export function streamChat(
             if (!line.startsWith("data: ")) continue;
             try {
               const data = JSON.parse(line.slice(6));
-              if (data.type === "chunk") {
+              if (data.type === "context_sources") {
+                callbacks.onContextSources?.(data.sources);
+              } else if (data.type === "chunk") {
                 callbacks.onChunk(data.text);
               } else if (data.type === "tool_call") {
                 callbacks.onToolCall?.(data.name, data.input);
               } else if (data.type === "tool_proposal") {
                 callbacks.onToolProposal?.(data.tool);
+              } else if (data.type === "context_loaded") {
+                callbacks.onContextLoaded?.(data.path, data.tokens);
               } else if (data.type === "done") {
                 receivedDone = true;
                 callbacks.onDone(data.full_text);
@@ -348,6 +374,8 @@ export function streamChatWithFiles(
     onError: (error: string) => void;
     onToolCall?: (name: string, input: Record<string, unknown>) => void;
     onToolProposal?: (tool: Record<string, unknown>) => void;
+    onContextSources?: (sources: { source: string; tokens: number }[]) => void;
+    onContextLoaded?: (path: string, tokens: number) => void;
   },
   project?: string,
   model?: string
@@ -392,12 +420,16 @@ export function streamChatWithFiles(
             if (!line.startsWith("data: ")) continue;
             try {
               const data = JSON.parse(line.slice(6));
-              if (data.type === "chunk") {
+              if (data.type === "context_sources") {
+                callbacks.onContextSources?.(data.sources);
+              } else if (data.type === "chunk") {
                 callbacks.onChunk(data.text);
               } else if (data.type === "tool_call") {
                 callbacks.onToolCall?.(data.name, data.input);
               } else if (data.type === "tool_proposal") {
                 callbacks.onToolProposal?.(data.tool);
+              } else if (data.type === "context_loaded") {
+                callbacks.onContextLoaded?.(data.path, data.tokens);
               } else if (data.type === "done") {
                 receivedDone = true;
                 callbacks.onDone(data.full_text);

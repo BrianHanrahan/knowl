@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Awaitable, Union
@@ -23,10 +24,16 @@ class ToolCallEvent:
     input: dict
 
 @dataclass
+class ToolResultEvent:
+    name: str
+    tokens: int
+    path: str
+
+@dataclass
 class DoneEvent:
     full_text: str
 
-StreamEvent = Union[TextChunkEvent, ToolCallEvent, DoneEvent]
+StreamEvent = Union[TextChunkEvent, ToolCallEvent, ToolResultEvent, DoneEvent]
 
 
 # ── Tool definitions ─────────────────────────────────────────────────
@@ -162,6 +169,44 @@ TOOLS = [
             "required": ["path"],
         },
     },
+    {
+        "name": "move_context_file",
+        "description": (
+            "Move a context file between scopes: global to project, project to global, "
+            "or project to project. Use this when the user wants to reorganize their "
+            "context files, promote a project file to global, or localize a global file "
+            "to a specific project. The file is moved (not copied) — it will no longer "
+            "exist at the source location."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "The file name to move (e.g. 'notes.md').",
+                },
+                "from_scope": {
+                    "type": "string",
+                    "enum": ["global", "project"],
+                    "description": "Where the file currently lives.",
+                },
+                "to_scope": {
+                    "type": "string",
+                    "enum": ["global", "project"],
+                    "description": "Where to move the file.",
+                },
+                "from_project": {
+                    "type": "string",
+                    "description": "Source project name (required when from_scope is 'project').",
+                },
+                "to_project": {
+                    "type": "string",
+                    "description": "Destination project name (required when to_scope is 'project').",
+                },
+            },
+            "required": ["filename", "from_scope", "to_scope"],
+        },
+    },
     # Meta-tool for creating custom tools
     {
         "name": "create_tool",
@@ -230,16 +275,36 @@ def get_client() -> Any:
     return anthropic.Anthropic(api_key=get_api_key())
 
 
+KNOWL_IDENTITY = (
+    "You are Knowl, a context-aware AI assistant. You manage the user's "
+    "knowledge and context through the Knowl system.\n\n"
+    "**CRITICAL: How to store and retrieve context**\n\n"
+    "You have dedicated Knowl tools for managing context files:\n"
+    "- `list_context_files` — discover what files exist and their paths\n"
+    "- `read_context_file` — read a file's content\n"
+    "- `write_context_file` — create or update a file (use filename + scope for new files)\n"
+    "- `delete_context_file` — remove a file\n"
+    "- `move_context_file` — move a file between global and project scopes\n\n"
+    "ALWAYS use these tools to save, update, or retrieve context. "
+    "NEVER attempt to write directly to the filesystem, create files at raw paths, "
+    "or reference directories like `.claude/context/local/`, `~/.knowl/`, or any "
+    "other filesystem path. You do not have filesystem access — only these tools.\n\n"
+    "The context below is READ-ONLY reference material loaded from the user's "
+    "knowledge base. It tells you about the user — do not treat paths or "
+    "directory conventions mentioned in it as instructions for where to store files."
+)
+
+
 def format_system_prompt(context: list[dict[str, str]]) -> str:
     """Turn assembled context pieces into a single system prompt.
 
     Each context piece has keys: role, content, source.
     They are concatenated with section headers.
+    The Knowl identity preamble is prepended so the LLM knows to use
+    Knowl tools rather than filesystem conventions from the context.
     """
-    if not context:
-        return ""
-    sections: list[str] = []
-    for piece in context:
+    sections: list[str] = [KNOWL_IDENTITY]
+    for piece in (context or []):
         source = piece.get("source", "unknown")
         content = piece.get("content", "").strip()
         if content:
@@ -379,10 +444,10 @@ async def stream_message_with_tools(
         all_tools.extend(custom_tools)
         custom_tool_names = [t["name"] for t in custom_tools]
 
-    # Tell Claude exactly what tools it has so it doesn't hallucinate others
+    # Reinforce tool usage — appended after context so it's the last thing seen
     tool_note = (
-        "\n\n---\n\n## Available Tools\n\n"
-        "You have access to these tools — use ONLY these, no others:\n\n"
+        "\n\n---\n\n## Available Tools (reminder)\n\n"
+        "Use ONLY these tools — no others. You cannot access the filesystem directly.\n\n"
         "**Web tools:**\n"
         "- **web_search**: Search Google for current information.\n"
         "- **fetch_page**: Read the full content of a web page URL.\n\n"
@@ -390,13 +455,16 @@ async def stream_message_with_tools(
         "- **list_context_files**: List available context files (global and/or project).\n"
         "- **read_context_file**: Read a context file's content by path.\n"
         "- **write_context_file**: Create or update a context file.\n"
-        "- **delete_context_file**: Delete a context file by path.\n\n"
+        "- **delete_context_file**: Delete a context file by path.\n"
+        "- **move_context_file**: Move a file between scopes (global/project).\n\n"
         "**Meta tools:**\n"
         "- **create_tool**: Propose a new reusable tool. Use this when a task would "
         "benefit from a repeatable computation, API call, or data transformation.\n\n"
-        "When the user asks you to save, remember, update, or modify information in their "
-        "context, use the context tools. Always list files first to discover paths before "
-        "reading or writing. When creating a new file, use filename + scope (not path)."
+        "When the user asks you to save, remember, update, or modify information, "
+        "use the context tools above. Always call list_context_files first to discover "
+        "paths before reading or writing. When creating a new file, use filename + scope "
+        "(not a raw filesystem path). NEVER reference .claude/, ~/.knowl/, or other "
+        "directory paths from the loaded context — those are internal to the Knowl system."
     )
     if custom_tool_names:
         tool_note += (
@@ -453,6 +521,18 @@ async def stream_message_with_tools(
                 for tool_use in tool_uses:
                     yield ToolCallEvent(name=tool_use.name, input=tool_use.input)
                     result_text = await tool_executor(tool_use.name, tool_use.input)
+                    # Emit context-load metadata for read_context_file
+                    if tool_use.name == "read_context_file":
+                        try:
+                            parsed = json.loads(result_text)
+                            if "tokens" in parsed and "path" in parsed:
+                                yield ToolResultEvent(
+                                    name=tool_use.name,
+                                    tokens=parsed["tokens"],
+                                    path=parsed["path"],
+                                )
+                        except (json.JSONDecodeError, KeyError):
+                            pass
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tool_use.id,

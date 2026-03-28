@@ -187,18 +187,30 @@ class TestTokenEstimation:
 
 
 class TestContextAssembly:
-    def test_basic_assembly(self):
+    def test_catalog_from_index_json(self):
         store.init_store()
-        (store.GLOBAL_DIR / "identity.md").write_text("I am a developer.")
+        (store.GLOBAL_DIR / "notes.md").write_text("# Notes\nSome notes here.")
+        store.rebuild_index()
         store.create_project("proj")
         pieces = store.assemble_context("proj")
-        assert len(pieces) >= 1
-        assert any("identity.md" in p["source"] for p in pieces)
+        # Should include a context-catalog piece built from index.json
+        catalog_pieces = [p for p in pieces if p["source"] == "context-catalog"]
+        assert len(catalog_pieces) == 1
+        assert "notes.md" in catalog_pieces[0]["content"]
+
+    def test_basic_assembly_with_project_files(self):
+        store.init_store()
+        store.create_project("proj")
+        pieces = store.assemble_context("proj")
+        # Should include project.md from active files
+        assert any("project.md" in p["source"] for p in pieces)
 
     def test_budget_respected(self):
         store.init_store()
-        # Create a file with ~100 tokens (400 chars)
-        (store.GLOBAL_DIR / "big.md").write_text("x" * 400)
+        # Create many large global files to fill the budget
+        for i in range(10):
+            (store.GLOBAL_DIR / f"big{i}.md").write_text("x" * 400)
+        store.rebuild_index()
         store.create_project("proj")
         # Tight budget
         pieces = store.assemble_context("proj", token_budget=50)
@@ -207,9 +219,17 @@ class TestContextAssembly:
 
     def test_assembly_without_project(self):
         store.init_store()
-        (store.GLOBAL_DIR / "identity.md").write_text("I am a developer.")
+        (store.GLOBAL_DIR / "info.md").write_text("# Info\nSome info.")
+        store.rebuild_index()
         pieces = store.assemble_context(None)
         assert len(pieces) == 1
+        assert pieces[0]["source"] == "context-catalog"
+
+    def test_assembly_no_files(self):
+        store.init_store()
+        # No files at all — catalog is empty, no pieces
+        pieces = store.assemble_context(None)
+        assert len(pieces) == 0
 
 
 class TestActiveFiles:

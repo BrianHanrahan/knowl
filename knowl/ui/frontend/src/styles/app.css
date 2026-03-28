@@ -155,6 +155,11 @@ body {
   background: rgba(231, 76, 60, 0.15);
 }
 
+.btn-icon.btn-move:hover {
+  color: var(--accent);
+  background: rgba(59, 130, 246, 0.15);
+}
+
 /* ── Project Selector ────────────────────────────────────────────── */
 
 .project-selector {
@@ -208,6 +213,35 @@ body {
   margin-bottom: 4px;
 }
 
+.section-toggle {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.section-toggle:hover {
+  color: var(--text);
+}
+
+.toggle-arrow {
+  display: inline-block;
+  font-size: 10px;
+  transition: transform 0.15s ease;
+}
+
+.toggle-arrow.expanded {
+  transform: rotate(90deg);
+}
+
+.file-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
 .file-item {
   display: flex;
   align-items: center;
@@ -221,6 +255,23 @@ body {
   text-align: center;
   color: var(--success);
   font-weight: bold;
+}
+
+.file-scope-badge {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.file-scope-badge.global {
+  background: rgba(59, 130, 246, 0.2);
+  color: var(--accent);
 }
 
 .file-name {
@@ -688,6 +739,17 @@ body {
   transform: scale(0.95);
 }
 
+.composer-send.stop {
+  background: var(--danger);
+  color: #fff;
+  opacity: 1;
+}
+
+.composer-send.stop:hover {
+  background: #c0392b;
+  transform: scale(1.05);
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
@@ -706,6 +768,84 @@ body {
   font-size: 11px;
   color: var(--text-dim);
   opacity: 0.4;
+}
+
+/* ── Context Tracker ───────────────────────────────────────────────── */
+
+.context-tracker {
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+  font-size: 12px;
+}
+
+.context-tracker-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.context-tracker-header:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.context-tracker-title {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.context-tracker-live {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--success);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.context-tracker-body {
+  padding: 0 16px 8px;
+}
+
+.context-tracker-group {
+  margin-bottom: 6px;
+}
+
+.context-tracker-group-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  opacity: 0.6;
+  margin-bottom: 2px;
+}
+
+.context-tracker-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 0;
+}
+
+.context-tracker-name {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.context-tracker-tokens {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .btn-attach:disabled {

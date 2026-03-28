@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import * as api from "./api";
 import ProjectSelector from "./components/ProjectSelector";
 import ContextPanel from "./components/ContextPanel";
-import TokenBudget from "./components/TokenBudget";
+// TokenBudget removed — context tracking moved to ChatView
 import ChatView from "./components/ChatView";
 import ToolsPanel from "./components/ToolsPanel";
 import ContextEditor from "./components/ContextEditor";
@@ -45,6 +45,15 @@ export default function App() {
     await handleSwitchProject(name);
   };
 
+  const handleDeleteProject = async (name: string) => {
+    await api.deleteProject(name);
+    const data = await api.getProjects();
+    setProjects(data.projects);
+    if (activeProject === name) {
+      await handleSwitchProject(null);
+    }
+  };
+
   const handleFileClick = (path: string) => {
     setEditingFile(path);
     setView("editor");
@@ -65,6 +74,7 @@ export default function App() {
           active={activeProject}
           onSwitch={handleSwitchProject}
           onCreate={handleCreateProject}
+          onDelete={handleDeleteProject}
         />
         <span className="model-badge">{model}</span>
         <button
@@ -93,9 +103,7 @@ export default function App() {
             />
           )}
 
-          {activeProject && (
-            <TokenBudget project={activeProject} refreshKey={refreshKey} />
-          )}
+          {/* Token budget tracking moved to ChatView context tracker */}
 
           <div className="sidebar-actions">
             <button

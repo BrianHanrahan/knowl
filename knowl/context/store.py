@@ -79,10 +79,60 @@ def _validate_path(path: Path) -> Path:
 # Store initialization
 # ---------------------------------------------------------------------------
 
+def _verify_writable(path: Path, label: str) -> None:
+    """Verify a directory exists and is writable, raising a clear error if not."""
+    resolved = path.resolve()
+    if not resolved.exists():
+        raise PermissionError(
+            f"{label} directory does not exist and could not be created: {resolved}"
+        )
+    if not os.access(resolved, os.W_OK):
+        raise PermissionError(
+            f"{label} directory is not writable: {resolved}. "
+            f"Fix with: chmod u+w '{resolved}'"
+        )
+
+
 def init_store() -> None:
     """Create the ~/.knowl directory structure if it doesn't exist."""
-    GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
-    PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    # Create directories first.
+    try:
+        KNOWL_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise PermissionError(
+            f"Cannot create knowl directory {KNOWL_DIR}: {exc}"
+        ) from exc
+
+    try:
+        PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise PermissionError(
+            f"Cannot create projects directory {PROJECTS_DIR}: {exc}"
+        ) from exc
+
+    # Global dir may be a symlink to an external directory — create the
+    # target only if it's a real (non-symlink) path.  If it's a symlink,
+    # verify the target exists and is writable.
+    if GLOBAL_DIR.is_symlink():
+        target = GLOBAL_DIR.resolve()
+        if not target.exists():
+            raise PermissionError(
+                f"Global context symlink {GLOBAL_DIR} points to "
+                f"{target} which does not exist."
+            )
+        _verify_writable(target, "Global context (symlink target)")
+    else:
+        try:
+            GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise PermissionError(
+                f"Cannot create global directory {GLOBAL_DIR}: {exc}"
+            ) from exc
+
+    # Verify all key directories are writable.
+    _verify_writable(KNOWL_DIR, "Knowl root")
+    _verify_writable(PROJECTS_DIR, "Projects")
+
     if not INDEX_PATH.exists():
         INDEX_PATH.write_text(json.dumps({"global": [], "projects": {}}, indent=2))
     if not CONFIG_PATH.exists():
@@ -152,6 +202,11 @@ def list_project_files(project_name: str) -> list[Path]:
 
 def create_project(name: str) -> Path:
     """Create a new project directory with a default project.md."""
+    if not os.access(PROJECTS_DIR, os.W_OK):
+        raise PermissionError(
+            f"Projects directory is not writable: {PROJECTS_DIR}. "
+            f"Fix with: chmod u+w '{PROJECTS_DIR}'"
+        )
     project_dir = PROJECTS_DIR / name
     _validate_path(project_dir)
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -210,8 +265,15 @@ def write_context_file(path: str | Path, content: str) -> None:
             f"Content size ({size} bytes) exceeds limit ({MAX_CONTEXT_FILE_SIZE} bytes). "
             "Split the file or increase the limit."
         )
+    # Check parent directory is writable (or can be created).
+    parent = path.parent
+    if parent.exists() and not os.access(parent, os.W_OK):
+        raise PermissionError(
+            f"Directory is not writable: {parent}. "
+            f"Fix with: chmod u+w '{parent}'"
+        )
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
     except OSError as exc:
         logger.error("Failed to write %s: %s", path, exc)
@@ -256,6 +318,83 @@ def promote_to_global(project_name: str, filename: str) -> Path | None:
     dest.write_text(content, encoding="utf-8")
     update_index_entry("global", None, filename)
     logger.info("Promoted %s/%s to global", project_name, filename)
+    return dest
+
+
+def move_context_file(
+    filename: str,
+    from_scope: str,
+    to_scope: str,
+    from_project: str | None = None,
+    to_project: str | None = None,
+) -> Path:
+    """Move a context file between scopes (global ↔ project, or project ↔ project).
+
+    Args:
+        filename: The file name (e.g. 'notes.md').
+        from_scope: 'global' or 'project'.
+        to_scope: 'global' or 'project'.
+        from_project: Source project name (required when from_scope='project').
+        to_project: Destination project name (required when to_scope='project').
+
+    Returns:
+        The destination Path.
+
+    Raises:
+        FileNotFoundError: If the source file doesn't exist.
+        FileExistsError: If a file with the same name already exists at dest.
+        ValueError: If scope/project args are invalid.
+    """
+    # Resolve source path
+    if from_scope == "global":
+        source = GLOBAL_DIR / filename
+    elif from_scope == "project":
+        if not from_project:
+            raise ValueError("from_project is required when from_scope='project'")
+        source = PROJECTS_DIR / from_project / filename
+    else:
+        raise ValueError(f"Invalid from_scope: {from_scope}")
+
+    # Resolve destination path
+    if to_scope == "global":
+        dest = GLOBAL_DIR / filename
+    elif to_scope == "project":
+        if not to_project:
+            raise ValueError("to_project is required when to_scope='project'")
+        dest_dir = PROJECTS_DIR / to_project
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / filename
+    else:
+        raise ValueError(f"Invalid to_scope: {to_scope}")
+
+    _validate_path(source)
+    _validate_path(dest)
+
+    if not source.exists():
+        raise FileNotFoundError(f"Source file does not exist: {source}")
+    if dest.exists():
+        raise FileExistsError(f"Destination file already exists: {dest}")
+
+    # Read, write to dest, delete source (not rename — may cross filesystems)
+    content = source.read_text(encoding="utf-8")
+    dest.write_text(content, encoding="utf-8")
+    source.unlink()
+
+    # Update index for both source and destination
+    if from_scope == "global":
+        update_index_entry("global", None, filename)
+    else:
+        update_index_entry("project", from_project, filename)
+
+    if to_scope == "global":
+        update_index_entry("global", None, filename)
+    else:
+        update_index_entry("project", to_project, filename)
+
+    logger.info("Moved %s from %s/%s to %s/%s",
+                filename,
+                from_scope, from_project or "",
+                to_scope, to_project or "")
     return dest
 
 
@@ -336,39 +475,105 @@ def estimate_active_context_tokens(project_name: str) -> dict[str, int]:
 # Context assembly
 # ---------------------------------------------------------------------------
 
+def _build_context_catalog(project_name: str | None) -> str:
+    """Build a compact catalog of available context files from index.json.
+
+    Returns a human-readable summary the LLM can use to decide which files
+    to load via `read_context_file`, without needing an extra tool call.
+    """
+    try:
+        if not INDEX_PATH.exists():
+            return ""
+        index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return ""
+
+    # Check if there's anything to list
+    global_entries = index.get("global", [])
+    project_entries = (
+        index.get("projects", {}).get(project_name, []) if project_name else []
+    )
+    all_projects = list(index.get("projects", {}).keys())
+    other_projects = [p for p in all_projects if p != project_name]
+    if not global_entries and not project_entries and not other_projects:
+        return ""
+
+    lines = ["# Available Context Files", ""]
+    lines.append("Use `read_context_file` to load any of these. "
+                 "Do NOT reference these paths directly — use the context tools.")
+    lines.append("")
+
+    # Global files
+    if global_entries:
+        lines.append("## Global")
+        for entry in global_entries:
+            name = entry.get("file", "")
+            tokens = entry.get("tokens", 0)
+            summary = entry.get("summary", "")
+            # Trim summary to first ~80 chars for compactness
+            if len(summary) > 80:
+                summary = summary[:77] + "..."
+            lines.append(f"- **{name}** ({tokens} tok): {summary}")
+        lines.append("")
+
+    # Current project files
+    if project_entries:
+        lines.append(f"## Project: {project_name}")
+        for entry in project_entries:
+            name = entry.get("file", "")
+            tokens = entry.get("tokens", 0)
+            summary = entry.get("summary", "")
+            if len(summary) > 80:
+                summary = summary[:77] + "..."
+            lines.append(f"- **{name}** ({tokens} tok): {summary}")
+        lines.append("")
+
+    # Other projects (just names, for awareness)
+    if other_projects:
+        lines.append(f"## Other projects: {', '.join(other_projects)}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def assemble_context(
     project_name: str | None,
     token_budget: int = 8000,
 ) -> list[dict[str, str]]:
-    """Load global + active project files within token budget.
+    """Load context catalog + active project files within token budget.
 
     Returns a list of dicts with keys: role, content, source.
+    The catalog is a compact summary built from index.json — the LLM
+    uses it to decide which files to load on demand via tools.
     """
     pieces: list[dict[str, str]] = []
     tokens_used = 0
 
-    # 1. Global files (mandatory)
-    for f in list_global_files():
-        try:
-            content = f.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        tokens = estimate_tokens(content)
-        if tokens_used + tokens > token_budget:
-            # Truncate to fit
-            chars_remaining = (token_budget - tokens_used) * 4
-            if chars_remaining > 100:
-                content = content[:chars_remaining] + f"\n\n[truncated — full file: {f}]"
-                tokens = estimate_tokens(content)
-            else:
-                logger.warning("Skipping global file %s — budget exhausted", f.name)
-                continue
-        pieces.append({
-            "role": "system",
-            "content": content,
-            "source": f"global/{f.name}",
-        })
-        tokens_used += tokens
+    # 1. Compact catalog from index.json (replaces raw INDEX.md loading)
+    catalog = _build_context_catalog(project_name)
+    if catalog:
+        tokens = estimate_tokens(catalog)
+        if tokens <= token_budget:
+            pieces.append({
+                "role": "system",
+                "content": catalog,
+                "source": "context-catalog",
+                "tokens": tokens,
+            })
+            tokens_used += tokens
+        else:
+            logger.warning("Context catalog exceeds budget — truncating")
+            chars = (token_budget - tokens_used) * 4
+            if chars > 100:
+                catalog = catalog[:chars] + "\n\n[truncated]"
+                tokens = estimate_tokens(catalog)
+                pieces.append({
+                    "role": "system",
+                    "content": catalog,
+                    "source": "context-catalog",
+                    "tokens": tokens,
+                })
+                tokens_used += tokens
 
     # 2. Project files (in active_files order)
     if project_name:
@@ -390,6 +595,7 @@ def assemble_context(
                 "role": "system",
                 "content": content,
                 "source": f"project/{f.name}",
+                "tokens": tokens,
             })
             tokens_used += tokens
 

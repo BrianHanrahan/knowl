@@ -24,6 +24,7 @@ export default function ContextPanel({
   );
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [globalExpanded, setGlobalExpanded] = useState(true);
 
   useEffect(() => {
     api.getGlobalFiles().then(setGlobalFiles);
@@ -82,17 +83,47 @@ export default function ContextPanel({
     onRefresh();
   };
 
+  const handleMoveToProject = async (file: api.ContextFile, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!project) return;
+    try {
+      await api.moveFile(file.name, "global", "project", undefined, project);
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleMoveToGlobal = async (file: api.ContextFile, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!project) return;
+    try {
+      await api.moveFile(file.name, "project", "global", project);
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
   return (
     <div className="context-panel">
       <h3>Context Files</h3>
 
       {globalFiles.length > 0 && (
         <div className="file-section">
-          <h4>Global</h4>
-          {globalFiles.map((f) => (
-            <div key={f.path} className="file-item">
-              <span className="file-check active-always" title="Always active">
-                *
+          <h4
+            className="section-toggle"
+            onClick={() => setGlobalExpanded((v) => !v)}
+            title={globalExpanded ? "Collapse" : "Expand"}
+          >
+            <span className={`toggle-arrow ${globalExpanded ? "expanded" : ""}`}>&#9656;</span>
+            Global
+            <span className="file-count">{globalFiles.length}</span>
+          </h4>
+          {globalExpanded && globalFiles.map((f) => (
+            <div key={f.path} className="file-item" title={f.summary || ""}>
+              <span className="file-scope-badge global" title="Always included in context">
+                G
               </span>
               {renamingPath === f.path ? (
                 <input
@@ -111,12 +142,21 @@ export default function ContextPanel({
                   className="file-name"
                   onClick={() => onFileClick(f.path)}
                   onDoubleClick={(e) => { e.stopPropagation(); handleRenameStart(f); }}
-                  title="Click to edit, double-click to rename"
+                  title={f.summary ? `${f.name}\n${f.summary}` : "Click to edit, double-click to rename"}
                 >
                   {f.name}
                 </span>
               )}
               <span className="file-tokens">{f.tokens}t</span>
+              {project && (
+                <button
+                  className="btn-icon btn-move"
+                  onClick={(e) => handleMoveToProject(f, e)}
+                  title={`Move to ${project}`}
+                >
+                  ↓
+                </button>
+              )}
               <button
                 className="btn-icon"
                 onClick={(e) => handleDelete(f.path, e)}
@@ -136,7 +176,7 @@ export default function ContextPanel({
             <div className="empty-hint">No context files yet.</div>
           )}
           {projectFiles.map((f) => (
-            <div key={f.path} className="file-item">
+            <div key={f.path} className="file-item" title={f.summary || ""}>
               <input
                 type="checkbox"
                 checked={f.active || false}
@@ -160,12 +200,19 @@ export default function ContextPanel({
                   className="file-name"
                   onClick={() => onFileClick(f.path)}
                   onDoubleClick={(e) => { e.stopPropagation(); handleRenameStart(f); }}
-                  title="Click to edit, double-click to rename"
+                  title={f.summary ? `${f.name}\n${f.summary}` : "Click to edit, double-click to rename"}
                 >
                   {f.name}
                 </span>
               )}
               <span className="file-tokens">{f.tokens}t</span>
+              <button
+                className="btn-icon btn-move"
+                onClick={(e) => handleMoveToGlobal(f, e)}
+                title="Move to Global"
+              >
+                ↑
+              </button>
               <button
                 className="btn-icon"
                 onClick={(e) => handleDelete(f.path, e)}

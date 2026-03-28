@@ -201,7 +201,8 @@ async def stream_message_with_tools(
         system_prompt=system_prompt if system_prompt else None,
         model=model,
         mcp_servers={"knowl": mcp_config},
-        allowed_tools=["mcp__knowl__*", "Read"],
+        allowed_tools=["mcp__knowl__*", "Read", "Write", "Edit"],
+        permission_mode="acceptEdits",
         max_turns=20,
         env=_sdk_env(),
     )

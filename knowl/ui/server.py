@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from knowl.context import store
 from knowl.llm import claude
-from knowl.llm.claude import TextChunkEvent, ToolCallEvent, DoneEvent
+from knowl.llm.claude import TextChunkEvent, ToolCallEvent, ToolResultEvent, DoneEvent
 
 
 # ── Pydantic request models (must be at module level for FastAPI) ────
@@ -52,6 +52,13 @@ class PromoteFile(BaseModel):
 class RenameFile(BaseModel):
     path: str
     new_name: str
+
+class MoveFile(BaseModel):
+    filename: str
+    from_scope: str  # "global" or "project"
+    to_scope: str    # "global" or "project"
+    from_project: Optional[str] = None
+    to_project: Optional[str] = None
 
 class FormatFile(BaseModel):
     content: str
@@ -208,8 +215,19 @@ def _register_context_routes(app: FastAPI) -> None:
     @app.get("/api/context/global")
     async def list_global_files():
         files = store.list_global_files()
+        # Load summaries from index for UI display
+        try:
+            index = json.loads(store.INDEX_PATH.read_text(encoding="utf-8")) if store.INDEX_PATH.exists() else {}
+        except (json.JSONDecodeError, OSError):
+            index = {}
+        summaries = {e["file"]: e.get("summary", "") for e in index.get("global", [])}
         return [
-            {"name": f.name, "tokens": store.estimate_file_tokens(f), "path": str(f)}
+            {
+                "name": f.name,
+                "tokens": store.estimate_file_tokens(f),
+                "path": str(f),
+                "summary": summaries.get(f.name, ""),
+            }
             for f in files
         ]
 
@@ -217,12 +235,19 @@ def _register_context_routes(app: FastAPI) -> None:
     async def list_project_files(name: str):
         files = store.list_project_files(name)
         active_paths = {str(f) for f in store.list_active_files(name)}
+        # Load summaries from index
+        try:
+            index = json.loads(store.INDEX_PATH.read_text(encoding="utf-8")) if store.INDEX_PATH.exists() else {}
+        except (json.JSONDecodeError, OSError):
+            index = {}
+        summaries = {e["file"]: e.get("summary", "") for e in index.get("projects", {}).get(name, [])}
         return [
             {
                 "name": f.name,
                 "tokens": store.estimate_file_tokens(f),
                 "path": str(f),
                 "active": str(f) in active_paths,
+                "summary": summaries.get(f.name, ""),
             }
             for f in files
         ]
@@ -234,12 +259,27 @@ def _register_context_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=404, detail="File not found")
         return {"path": path, "content": content}
 
+    def _update_index_for_path(file_path: str) -> None:
+        """Update the index entry for a file based on its location."""
+        p = Path(file_path)
+        resolved_global = store.GLOBAL_DIR.resolve()
+        resolved_projects = store.PROJECTS_DIR.resolve()
+        resolved_p = p.resolve()
+        if str(resolved_p).startswith(str(resolved_global)):
+            store.update_index_entry("global", None, p.name)
+        elif str(resolved_p).startswith(str(resolved_projects)):
+            # Extract project name from path: PROJECTS_DIR / project / file.md
+            rel = resolved_p.relative_to(resolved_projects)
+            if len(rel.parts) >= 2:
+                store.update_index_entry("project", rel.parts[0], rel.parts[1])
+
     @app.put("/api/context/file")
     async def write_file(payload: WriteFile):
         try:
             store.write_context_file(payload.path, payload.content)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        _update_index_for_path(payload.path)
         return {"path": payload.path, "tokens": store.estimate_tokens(payload.content)}
 
     @app.post("/api/context/file")
@@ -255,6 +295,7 @@ def _register_context_routes(app: FastAPI) -> None:
             store.write_context_file(target, content)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        _update_index_for_path(str(target))
         return {"path": str(target), "tokens": store.estimate_tokens(content)}
 
     @app.delete("/api/context/file")
@@ -262,6 +303,7 @@ def _register_context_routes(app: FastAPI) -> None:
         ok = store.delete_context_file(path)
         if not ok:
             raise HTTPException(status_code=404, detail="File not found")
+        _update_index_for_path(path)
         return {"deleted": path}
 
     @app.put("/api/context/active/{project}")
@@ -275,6 +317,8 @@ def _register_context_routes(app: FastAPI) -> None:
         new_path = old.parent / payload.new_name
         try:
             result = store.rename_context_file(old, new_path)
+            _update_index_for_path(payload.path)  # remove old entry
+            _update_index_for_path(str(result))    # add new entry
             return {"old_path": payload.path, "new_path": str(result)}
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="File not found")
@@ -314,6 +358,24 @@ def _register_context_routes(app: FastAPI) -> None:
         if not result:
             raise HTTPException(status_code=404, detail="File not found in project")
         return {"promoted": payload.filename, "path": str(result)}
+
+    @app.post("/api/context/move")
+    async def move_file(payload: MoveFile):
+        try:
+            dest = store.move_context_file(
+                filename=payload.filename,
+                from_scope=payload.from_scope,
+                to_scope=payload.to_scope,
+                from_project=payload.from_project,
+                to_project=payload.to_project,
+            )
+            return {"filename": payload.filename, "destination": str(dest)}
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Source file not found")
+        except FileExistsError:
+            raise HTTPException(status_code=409, detail="File already exists at destination")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
 
 # ── Inspect routes ───────────────────────────────────────────────────
@@ -386,14 +448,36 @@ def _register_chat_routes(app: FastAPI) -> None:
         # Context tools
         elif name == "list_context_files":
             project_name = input_data.get("project")
+            # Load index for summaries so the LLM can pick files intelligently
+            try:
+                index = json.loads(store.INDEX_PATH.read_text(encoding="utf-8")) if store.INDEX_PATH.exists() else {}
+            except (json.JSONDecodeError, OSError):
+                index = {}
+            global_summaries = {e["file"]: e.get("summary", "") for e in index.get("global", [])}
             global_files = [
-                {"name": f.name, "tokens": store.estimate_file_tokens(f), "path": str(f), "scope": "global"}
+                {
+                    "name": f.name,
+                    "tokens": store.estimate_file_tokens(f),
+                    "path": str(f),
+                    "scope": "global",
+                    "summary": global_summaries.get(f.name, ""),
+                }
                 for f in store.list_global_files()
             ]
             project_files = []
             if project_name:
+                proj_summaries = {
+                    e["file"]: e.get("summary", "")
+                    for e in index.get("projects", {}).get(project_name, [])
+                }
                 project_files = [
-                    {"name": f.name, "tokens": store.estimate_file_tokens(f), "path": str(f), "scope": project_name}
+                    {
+                        "name": f.name,
+                        "tokens": store.estimate_file_tokens(f),
+                        "path": str(f),
+                        "scope": project_name,
+                        "summary": proj_summaries.get(f.name, ""),
+                    }
                     for f in store.list_project_files(project_name)
                 ]
             projects = store.list_projects()
@@ -406,7 +490,8 @@ def _register_chat_routes(app: FastAPI) -> None:
             content = store.read_context_file(rpath)
             if content is None:
                 return json.dumps({"error": f"File not found: {rpath}"})
-            return json.dumps({"path": rpath, "content": content})
+            tokens = store.estimate_tokens(content)
+            return json.dumps({"path": rpath, "content": content, "tokens": tokens})
 
         elif name == "write_context_file":
             content = input_data["content"]
@@ -439,7 +524,25 @@ def _register_chat_routes(app: FastAPI) -> None:
             ok = store.delete_context_file(dpath)
             if not ok:
                 return json.dumps({"error": f"File not found: {dpath}"})
+            _update_index_for_path(dpath)
             return json.dumps({"success": True, "deleted": dpath})
+
+        elif name == "move_context_file":
+            try:
+                dest = store.move_context_file(
+                    filename=input_data["filename"],
+                    from_scope=input_data["from_scope"],
+                    to_scope=input_data["to_scope"],
+                    from_project=input_data.get("from_project"),
+                    to_project=input_data.get("to_project"),
+                )
+                return json.dumps({"success": True, "destination": str(dest)})
+            except FileNotFoundError as exc:
+                return json.dumps({"error": str(exc)})
+            except FileExistsError as exc:
+                return json.dumps({"error": str(exc)})
+            except ValueError as exc:
+                return json.dumps({"error": str(exc)})
 
         # Meta-tool: create a new custom tool
         elif name == "create_tool":
@@ -496,7 +599,7 @@ def _register_chat_routes(app: FastAPI) -> None:
                             "error": f"Tool '{name}' has status '{status}' and cannot be used."
                         })
 
-            available = "web_search, fetch_page, list_context_files, read_context_file, write_context_file, delete_context_file, create_tool"
+            available = "web_search, fetch_page, list_context_files, read_context_file, write_context_file, delete_context_file, move_context_file, create_tool"
             return json.dumps({
                 "error": f"Unknown tool: {name}. Available tools: {available}"
             })
@@ -510,7 +613,10 @@ def _register_chat_routes(app: FastAPI) -> None:
         context_pieces = store.assemble_context(project)
         history = store.load_history(project)
 
+        context_sources = [{"source": p["source"], "tokens": p.get("tokens", 0)} for p in context_pieces]
+
         async def event_stream():
+            yield f"data: {json.dumps({'type': 'context_sources', 'sources': context_sources})}\n\n"
             full_response = []
             try:
                 stream_fn = _get_stream_fn(config)
@@ -531,6 +637,8 @@ def _register_chat_routes(app: FastAPI) -> None:
                             yield f"data: {json.dumps({'type': 'tool_proposal', 'tool': event.input})}\n\n"
                         else:
                             yield f"data: {json.dumps({'type': 'tool_call', 'name': event.name, 'input': event.input})}\n\n"
+                    elif isinstance(event, ToolResultEvent):
+                        yield f"data: {json.dumps({'type': 'context_loaded', 'path': event.path, 'tokens': event.tokens})}\n\n"
                     elif isinstance(event, DoneEvent):
                         response_text = event.full_text
                         try:
@@ -647,7 +755,10 @@ def _register_chat_routes(app: FastAPI) -> None:
         if file_descriptions:
             history_content = message + "\n\nAttachments: " + ", ".join(file_descriptions)
 
+        upload_context_sources = [{"source": p["source"], "tokens": p.get("tokens", 0)} for p in context_pieces]
+
         async def event_stream():
+            yield f"data: {json.dumps({'type': 'context_sources', 'sources': upload_context_sources})}\n\n"
             try:
                 stream_fn = _get_stream_fn(config)
                 bound_executor = functools.partial(execute_tool, project=proj)
@@ -667,6 +778,8 @@ def _register_chat_routes(app: FastAPI) -> None:
                             yield f"data: {json.dumps({'type': 'tool_proposal', 'tool': event.input})}\n\n"
                         else:
                             yield f"data: {json.dumps({'type': 'tool_call', 'name': event.name, 'input': event.input})}\n\n"
+                    elif isinstance(event, ToolResultEvent):
+                        yield f"data: {json.dumps({'type': 'context_loaded', 'path': event.path, 'tokens': event.tokens})}\n\n"
                     elif isinstance(event, DoneEvent):
                         response_text = event.full_text
                         try:

@@ -1,61 +1,74 @@
 {
   "global": [
     {
-      "file": "AboutBrian.md",
-      "tokens": 125,
-      "summary": "# About Me  - 67 High Rd, Newbury, MA\\   (978) 961-0494 - [brian.hanrahan@gmail.com](mailto:brian.ha"
+      "file": "boat-worldcat-290dc.md",
+      "tokens": 2593,
+      "summary": "---  ## topic: boat updated: 2026-03-13  # 2011 WorldCat 290 DC  > Brian's boat \u2014 purchased fall 202"
     },
     {
-      "file": "AboutClaude.md",
-      "tokens": 157,
-      "summary": "# About Claude  Claude's self-developed preferences and favorite things.  ## Favorites  | Category |"
+      "file": "business-profile.md",
+      "tokens": 88,
+      "summary": "--- topic: business-profile updated: 2026-03-10 ---  # Business Profile  ## Role  - **Title:** VP of"
     },
     {
-      "file": "CodingProjects.md",
-      "tokens": 228,
-      "summary": "# Coding Projects  - **COAL** - a vertical AI solution focused on sales enablement   - `/Users/brian"
+      "file": "coding-preferences.md",
+      "tokens": 62,
+      "summary": "--- topic: coding-preferences updated: 2026-03-10 ---  # Coding Preferences  ## Languages & Stack  -"
     },
     {
-      "file": "ToDo-Global.md",
-      "tokens": 26,
-      "summary": "# [ToDo-Global.md](http://ToDo-Global.md)  - Townsend Energy   - leaking pipe   - replace radiator 3"
+      "file": "personal-profile.md",
+      "tokens": 322,
+      "summary": "--- topic: personal-profile updated: 2026-03-11 ---  # Personal Profile  ## About Me  - **Name:** Br"
+    },
+    {
+      "file": "projects.md",
+      "tokens": 758,
+      "summary": "--- topic: projects updated: 2026-03-10 ---  # Projects  ## Non-Software Projects  ### Home Renovati"
+    },
+    {
+      "file": "task-system.md",
+      "tokens": 212,
+      "summary": "--- topic: task-system updated: 2026-03-10 ---  # Task System  ## Recurring Tasks  ### Daily - Read"
+    },
+    {
+      "file": "team-and-contacts.md",
+      "tokens": 160,
+      "summary": "--- topic: team-and-contacts updated: 2026-03-10 ---  # Team & Contacts  ## Work \u2014 Key People  | Nam"
+    },
+    {
+      "file": "tools-and-workflows.md",
+      "tokens": 332,
+      "summary": "--- topic: tools-and-workflows updated: 2026-03-10 ---  # Tools & Workflows  ## Productivity & Commu"
+    },
+    {
+      "file": "writing-style.md",
+      "tokens": 143,
+      "summary": "--- topic: writing-style updated: 2026-03-10 ---  # Writing Style  ## Tone & Voice  - **Tone:** Prof"
     }
   ],
   "projects": {
     "Boat": [
       {
-        "file": "WorldCat.md",
-        "tokens": 1151,
-        "summary": "# 2011 World Cat 290 DC  ## Overview  The World Cat 290 DC (Dual Console) is a semi-displacement pow"
+        "file": "todo.md",
+        "tokens": 1316,
+        "summary": "# Boat To-Do List  > \ud83d\udd34 Must and \ud83d\udfe1 Should items are being completed at: **New England Auto & Boat Sto"
       },
       {
-        "file": "project.md",
-        "tokens": 974,
+        "file": "Worldcat290.md",
+        "tokens": 1166,
         "summary": "# 2011 WorldCat 290 DC \u2014 Project File  ---  ### Links  - [Boat Trader Listing](https://www.boattrade"
       },
       {
-        "file": "todo.md",
-        "tokens": 1303,
-        "summary": "# Boat To-Do List  > \ud83d\udd34 Must and \ud83d\udfe1 Should items are being completed at: > **New England Auto & Boat S"
+        "file": "boat-mmsi-ais-registration.md",
+        "tokens": 2342,
+        "summary": "--- topic: boat updated: 2026-03-13 ---  # MMSI & AIS Registration \u2014 2011 World Cat 290 DC  > Refere"
       }
     ],
-    "knowl": [
-      {
-        "file": "CompetitiveAnalysis.md",
-        "tokens": 178,
-        "summary": "# Knowl vs. Claude Cowork \u2014 Competitive Summary  ## Cowork in one line Autonomous task executor for"
-      },
-      {
-        "file": "roadmap.md",
-        "tokens": 295,
-        "summary": "# Knowl Roadmap  ## \ud83d\udd27 Planned Tools  ### 1. Structured Web Extractor - **What:** Give Claude a URL +"
-      }
-    ],
-    "knowl-app": [
+    "Local-Food": [
       {
         "file": "project.md",
         "tokens": 10,
-        "summary": "# knowl-app  Project context goes here."
+        "summary": "# Local-Food  Project context goes here."
       }
     ]
   }

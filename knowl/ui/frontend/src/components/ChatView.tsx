@@ -33,9 +33,13 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
   const [proposals, setProposals] = useState<ToolProposal[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [preloadedContext, setPreloadedContext] = useState<{ source: string; tokens: number }[]>([]);
+  const [loadedContext, setLoadedContext] = useState<{ path: string; tokens: number }[]>([]);
+  const [contextExpanded, setContextExpanded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const streamingTextRef = useRef("");
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -72,26 +76,76 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
     });
   };
 
+  const handleStop = () => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    // Save partial response to history
+    setStreamingText((partial) => {
+      if (partial) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: partial + "\n\n*(interrupted)*" },
+        ]);
+      }
+      return "";
+    });
+    setToolStatus(null);
+    setStreaming(false);
+  };
+
   const handleSend = async () => {
     const msg = input.trim();
-    if (!msg || streaming) return;
+    if (!msg) return;
+
+    if (msg === "/clear" || msg === "/reset") {
+      setInput("");
+      await handleClear();
+      return;
+    }
+
+    // /btw interjection while streaming — abort and resend with added context
+    if (streaming) {
+      const partialText = streamingTextRef.current;
+      handleStop();
+      // Small delay to let abort settle
+      await new Promise((r) => setTimeout(r, 50));
+      // Now send the interjection as a new message with context
+      const btw = msg.startsWith("/btw ") ? msg.slice(5) : msg;
+      const fullMsg = partialText
+        ? `(Continuing from partial response: "${partialText.slice(-200)}...")\n\n${btw}`
+        : btw;
+      setInput("");
+      // Fall through to send fullMsg
+      await doSend(fullMsg, []);
+      return;
+    }
 
     const currentFiles = files;
     setInput("");
     setFiles([]);
+    await doSend(msg, currentFiles);
+  };
 
+  const doSend = async (msg: string, currentFiles: File[]) => {
     const displayContent = currentFiles.length > 0
       ? msg + "\n\nAttachments: " + currentFiles.map((f) => f.name).join(", ")
       : msg;
     setMessages((prev) => [...prev, { role: "user", content: displayContent }]);
     setStreaming(true);
     setStreamingText("");
+    streamingTextRef.current = "";
     setToolStatus(null);
 
     const callbacks = {
       onChunk: (text: string) => {
         setToolStatus(null);
-        setStreamingText((prev) => prev + text);
+        setStreamingText((prev) => {
+          const updated = prev + text;
+          streamingTextRef.current = updated;
+          return updated;
+        });
       },
       onToolCall: (name: string, input: Record<string, any>) => {
         const inp = input as Record<string, any>;
@@ -136,6 +190,16 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
         setStreamingText("");
         setToolStatus(null);
         setStreaming(false);
+      },
+      onContextSources: (sources: { source: string; tokens: number }[]) => {
+        setPreloadedContext(sources);
+        setLoadedContext([]);
+      },
+      onContextLoaded: (path: string, tokens: number) => {
+        setLoadedContext((prev) => {
+          if (prev.some((p) => p.path === path)) return prev;
+          return [...prev, { path, tokens }];
+        });
       },
     };
 
@@ -192,6 +256,11 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
   const handleClear = async () => {
     await api.clearHistory(project || undefined);
     setMessages([]);
+    setProposals([]);
+    setPreloadedContext([]);
+    setLoadedContext([]);
+    setToolStatus(null);
+    setStreamingText("");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -385,8 +454,7 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
               autoGrow(e.target);
             }}
             onKeyDown={handleKeyDown}
-            placeholder={streaming ? "Waiting for response..." : "Message Knowl..."}
-            disabled={streaming}
+            placeholder={streaming ? "Type to interject..." : "Message Knowl..."}
             rows={1}
           />
 
@@ -395,22 +463,28 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
               onTranscript={(text) => setInput((prev) => prev + text)}
               disabled={streaming}
             />
-            <button
-              className={`composer-send ${input.trim() && !streaming ? "ready" : ""}`}
-              onClick={handleSend}
-              disabled={streaming || !input.trim()}
-              title="Send message"
-            >
-              {streaming ? (
-                <svg className="composer-spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M12 2v4m0 12v4m-7.07-3.93l2.83-2.83m8.48-8.48l2.83-2.83M2 12h4m12 0h4m-3.93 7.07l-2.83-2.83M7.76 7.76L4.93 4.93"/>
+            {streaming && !input.trim() ? (
+              <button
+                className="composer-send stop"
+                onClick={handleStop}
+                title="Stop response"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="6" width="12" height="12" rx="2" />
                 </svg>
-              ) : (
+              </button>
+            ) : (
+              <button
+                className={`composer-send ${input.trim() ? "ready" : ""}`}
+                onClick={handleSend}
+                disabled={!input.trim()}
+                title={streaming ? "Send interjection" : "Send message"}
+              >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M3.478 2.405a.75.75 0 0 0-.926.94l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.405z"/>
                 </svg>
-              )}
-            </button>
+              </button>
+            )}
           </div>
         </div>
 
@@ -418,6 +492,55 @@ export default function ChatView({ project, refreshKey, onRefresh }: Props) {
           <span>Enter to send, Shift+Enter for newline</span>
         </div>
       </div>
+
+      {(preloadedContext.length > 0 || loadedContext.length > 0) && (() => {
+        const totalTokens =
+          preloadedContext.reduce((s, c) => s + c.tokens, 0) +
+          loadedContext.reduce((s, c) => s + c.tokens, 0);
+        const totalFiles = preloadedContext.length + loadedContext.length;
+        return (
+          <div className="context-tracker">
+            <div
+              className="context-tracker-header"
+              onClick={() => setContextExpanded((v) => !v)}
+            >
+              <span className={`toggle-arrow ${contextExpanded ? "expanded" : ""}`}>&#9656;</span>
+              <span className="context-tracker-title">
+                Context: {totalFiles} file{totalFiles !== 1 ? "s" : ""} &middot; {totalTokens}t
+              </span>
+              {streaming && loadedContext.length > 0 && (
+                <span className="context-tracker-live">live</span>
+              )}
+            </div>
+            {contextExpanded && (
+              <div className="context-tracker-body">
+                {preloadedContext.length > 0 && (
+                  <div className="context-tracker-group">
+                    <div className="context-tracker-group-label">Pre-loaded</div>
+                    {preloadedContext.map((s) => (
+                      <div key={s.source} className="context-tracker-item">
+                        <span className="context-tracker-name">{s.source.split("/").pop()}</span>
+                        <span className="context-tracker-tokens">{s.tokens}t</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {loadedContext.length > 0 && (
+                  <div className="context-tracker-group">
+                    <div className="context-tracker-group-label">Loaded by Claude</div>
+                    {loadedContext.map((s) => (
+                      <div key={s.path} className="context-tracker-item">
+                        <span className="context-tracker-name">{s.path.split("/").pop()}</span>
+                        <span className="context-tracker-tokens">{s.tokens}t</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
