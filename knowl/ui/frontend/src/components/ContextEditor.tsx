@@ -160,8 +160,8 @@ export default function ContextEditor({ filePath, onClose }: Props) {
           >
             {saving ? "Saving..." : "Save"}
           </button>
-          <button className="btn btn-sm" onClick={onClose}>
-            Close
+          <button className="btn btn-sm" onClick={onClose} title="Close file and return to chat">
+            ✕ Close
           </button>
         </div>
       </div>

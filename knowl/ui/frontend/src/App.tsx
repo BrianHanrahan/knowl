@@ -102,20 +102,42 @@ export default function App() {
               onRefresh={refresh}
             />
           )}
+        </aside>
 
           {/* Token budget tracking moved to ChatView context tracker */}
 
           <div className="sidebar-actions">
             <button
-              className={`btn btn-sm ${view === "inspect" ? "btn-active" : ""}`}
-              onClick={() => setView(view === "inspect" ? "chat" : "inspect")}
+              className={`view-tab ${view === "chat" ? "view-tab-active" : ""}`}
+              onClick={() => setView("chat")}
             >
-              Inspect Context
+              Chat
             </button>
-          </div>
-        </aside>
+            {editingFile && (
+              <button
+                className={`view-tab ${view === "editor" ? "view-tab-active" : ""}`}
+                onClick={() => setView("editor")}
+              >
+                <span className="view-tab-label">{editingFile.split("/").pop()}</span>
+                <span
+                  className="view-tab-close"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleEditorClose();
+                  }}
+                >
+                  ×
+                </span>
+              </button>
+            )}
+            <button
+              className={`view-tab ${view === "inspect" ? "view-tab-active" : ""}`}
+              onClick={() => setView("inspect")}
+            >
+              Inspect
+            </button>
+          </nav>
 
-        <main className="main-panel">
           <div style={{ display: view === "chat" ? "contents" : "none" }}>
             <ChatView project={activeProject} refreshKey={refreshKey} onRefresh={refresh} />
           </div>
